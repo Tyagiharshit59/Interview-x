@@ -59,17 +59,20 @@ export function RoomView({ kind, getTicket, title, displayName, interviewId, pre
   const recorders = useRef<ChunkRecorder[]>([]); const sideRef = useRef(side); sideRef.current = side; const meIdRef = useRef('');
   const flash = (m: string) => { setNotices(n => [...n, m]); setTimeout(() => setNotices(n => n.slice(1)), 6000); };
 
+  const yHandlers = useRef(new Set<(m: any) => void>()); const [yEpoch, setYEpoch] = useState(0);
   const room = useRoom({
     kind, getTicket, onMessage: m => {
       switch (m.t) {
         case 'welcome': {
-          const s = m.state; setChat(s.chat || []); setFiles(s.files); setActive(s.activeFile); setAllowEdit(s.codeEditAllowed); setWb(s.whiteboard || []); setStatus(s.status); setStartedAt(s.startedAt); setDuration(s.durationMin);
+          const s = m.state; setChat(s.chat || []); setFiles(s.files); setActive(s.activeFile); setYEpoch(e => e + 1); setAllowEdit(s.codeEditAllowed); setWb(s.whiteboard || []); setStatus(s.status); setStartedAt(s.startedAt); setDuration(s.durationMin);
           setRec(s.recording); setConsents(s.consents); setPaused(s.paused); setQuestion(s.question); setCfg(s.config); setCanShare(s.canShareScreen);
           if (!isStaff && s.config.recording && s.consents.recording === null) setShowConsent(true);
           break;
         }
         case 'chat': setChat(c => [...c, m]); if (sideRef.current !== 'chat') setUnread(u => u + 1); break;
         case 'chat-file': setChat(c => [...c, { name: m.name, at: m.at, file: m.file }]); if (sideRef.current !== 'chat') setUnread(u => u + 1); break;
+        case 'code-yjs': yHandlers.current.forEach(h => h(m)); if (m.language) setFiles(f => f[m.file] ? { ...f, [m.file]: { ...f[m.file], language: m.language } } : f); break;
+        case 'code-language': setFiles(f => f[m.file] ? { ...f, [m.file]: { ...f[m.file], language: m.language } } : f); break;
         case 'code-update': setFiles(f => ({ ...f, [m.file]: { content: m.content, language: m.language, version: m.version } })); break;
         case 'code-files': setFiles(m.files); break;
         case 'code-permission': setAllowEdit(m.allow); break;
@@ -249,7 +252,8 @@ export function RoomView({ kind, getTicket, title, displayName, interviewId, pre
           {tab === 'code' && cfg.coding && (
             <CodePanel files={files} active={active} setActive={setActive} readOnly={!isStaff && !allowEdit} hasQuestion={!!question} result={result} running={running} question={question} isStaff={isStaff} allowEdit={allowEdit}
               onToggleEdit={v => room.send({ t: 'code-permission', allow: v })} onPaste={isStaff ? undefined : () => room.send({ t: 'review-signal', type: 'paste' })}
-              onChange={(file, content, language) => { setFiles(f => ({ ...f, [file]: { ...f[file], content, language: language || f[file].language } })); room.send({ t: 'code-update', file, content, language }); }}
+              onChange={(file, content) => setFiles(f => f[file] ? { ...f, [file]: { ...f[file], content } } : f)} onLanguage={(file, language) => room.send({ t: 'code-language', file, language })}
+              yBus={{ epoch: yEpoch, subscribe: fn => { yHandlers.current.add(fn); return () => { yHandlers.current.delete(fn); }; }, send: (file, update) => room.send({ t: 'code-yjs', file, update }), sync: file => room.send({ t: 'code-yjs-sync', file }) }}
               onRun={(file, stdin) => { setRunning(true); room.send({ t: 'code-run', file, stdin }); }} onSubmit={file => { setRunning(true); room.send({ t: 'code-submit', file }); }} onAddFile={n => room.send({ t: 'code-file-add', file: n })} />
           )}
           {tab === 'board' && cfg.whiteboard && <Whiteboard items={wb} setItems={setWb} send={room.send} myId={room.me?.id || ''} canClear={isStaff} />}

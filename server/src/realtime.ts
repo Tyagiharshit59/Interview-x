@@ -1,3 +1,4 @@
+import * as Y from 'yjs';
 import { WebSocketServer, WebSocket } from 'ws';
 import type { Server } from 'node:http';
 import crypto from 'node:crypto';
@@ -29,6 +30,28 @@ interface Room {
   questionId: string | null;
 }
 const rooms = new Map<string, Room>();
+
+/* ---- collaborative text (Yjs CRDT): one Y.Doc per file; server keeps it so late joiners sync and runs/snapshots see the merged text ---- */
+const docs = new WeakMap<Room, Map<string, Y.Doc>>();
+function ydocFor(r: Room, name: string): Y.Doc {
+  let m = docs.get(r); if (!m) { m = new Map(); docs.set(r, m); }
+  let d = m.get(name); if (d) return d;
+  d = new Y.Doc(); const t = d.getText('c');
+  const f = r.files[name]; const seed = (f?.content ?? '').replace(/\r\n?/g, '\n');
+  if (seed) t.insert(0, seed);
+  t.observe(() => { const ff = r.files[name]; if (!ff) return; ff.content = t.toString(); ff.version++; r.dirtyFiles.add(name); });
+  m.set(name, d); return d;
+}
+/** Replaces the whole text with a minimal diff. Returns the Yjs update to broadcast. */
+function setYText(r: Room, name: string, content: string): Uint8Array {
+  const d = ydocFor(r, name); const t = d.getText('c'); const a = t.toString(); const b = content.replace(/\r\n?/g, '\n');
+  let st = 0; while (st < a.length && st < b.length && a[st] === b[st]) st++;
+  let ea = a.length, eb = b.length; while (ea > st && eb > st && a[ea - 1] === b[eb - 1]) { ea--; eb--; }
+  let upd: Uint8Array = new Uint8Array(); const h = (u: Uint8Array) => { upd = u; }; d.on('update', h);
+  d.transact(() => { if (ea > st) t.delete(st, ea - st); if (eb > st) t.insert(st, b.slice(st, eb)); });
+  d.off('update', h); return upd;
+}
+const b64 = (u: Uint8Array) => Buffer.from(u).toString('base64');
 
 function loadRoom(interviewId: string, companyId: string): Room {
   let r = rooms.get(interviewId);
@@ -174,7 +197,7 @@ function onConnect(ws: WebSocket, tk: Ticket) {
     if (peer.kind === 'camera' && peer.cameraSessionId) db.prepare('UPDATE camera_sessions SET ended_at=? WHERE id=?').run(now(), peer.cameraSessionId);
     if (peer.kind === 'camera') addEvent(r, 'secondary_camera_disconnected', null);
     if (peer.kind === 'candidate') addEvent(r, 'candidate_left', peer.name);
-    if (!r.peers.size) { persistCode(r, true); rooms.delete(r.id); }
+    if (!r.peers.size) { persistCode(r, true); docs.get(r)?.forEach(d => d.destroy()); docs.delete(r); rooms.delete(r.id); }
   });
 }
 
@@ -307,9 +330,36 @@ function handle(r: Room, p: Peer, m: any) {
       const content = String(m.content ?? '').slice(0, 200_000);
       const f = r.files[name] ?? (r.files[name] = { content: '', language: m.language || 'javascript', version: 0 });
       if (m.language && LANGUAGES[m.language]) f.language = m.language;
-      f.content = content; f.version++;
-      r.dirtyFiles.add(name);
-      return broadcast(r, { t: 'code-update', file: name, content, language: f.language, version: f.version, by: p.id }, p.id, x => x.kind !== 'camera');
+      const upd = setYText(r, name, content);
+      return broadcast(r, { t: 'code-yjs', file: name, update: b64(upd), language: f.language }, p.id, x => x.kind !== 'camera');
+    }
+    case 'code-yjs': { // incremental CRDT update from an editor
+      need(p.kind !== 'camera');
+      need(isStaff(p) || r.codeEditAllowed, 'Editing is currently disabled by the interviewer');
+      const name = String(m.file || r.activeFile).slice(0, 60); need(!!r.files[name], 'Unknown file');
+      const buf = Buffer.from(String(m.update || ''), 'base64'); need(buf.length > 0 && buf.length <= 400_000, 'Bad update');
+      const d = ydocFor(r, name);
+      try { Y.applyUpdate(d, new Uint8Array(buf), p.id); } catch { throw Object.assign(new Error('Bad update'), { code: 'bad_update' }); }
+      broadcast(r, { t: 'code-yjs', file: name, update: m.update }, p.id, x => x.kind !== 'camera');
+      const t = d.getText('c');
+      if (t.length > 200_000) { // Yjs cannot roll back: trim the tail and tell everyone
+        let trim: Uint8Array = new Uint8Array(); const h = (u: Uint8Array) => { trim = u; }; d.on('update', h);
+        d.transact(() => t.delete(200_000, t.length - 200_000)); d.off('update', h);
+        broadcast(r, { t: 'code-yjs', file: name, update: b64(trim) }, undefined, x => x.kind !== 'camera');
+        send(p, { t: 'error', message: 'File is too large (200,000 characters max); the excess was removed.' });
+      }
+      return;
+    }
+    case 'code-yjs-sync': { // client asks for the full current state of a file
+      need(p.kind !== 'camera');
+      const name = String(m.file || r.activeFile).slice(0, 60); need(!!r.files[name], 'Unknown file');
+      return send(p, { t: 'code-yjs', file: name, update: b64(Y.encodeStateAsUpdate(ydocFor(r, name))), sync: true, language: r.files[name].language });
+    }
+    case 'code-language': {
+      need(p.kind !== 'camera'); need(isStaff(p) || r.codeEditAllowed);
+      const name = String(m.file || r.activeFile).slice(0, 60); const f = r.files[name]; need(!!f, 'Unknown file');
+      if (m.language && LANGUAGES[m.language]) { f.language = m.language; r.dirtyFiles.add(name); }
+      return broadcast(r, { t: 'code-language', file: name, language: f.language }, undefined, x => x.kind !== 'camera');
     }
     case 'code-file-add': {
       need(isStaff(p) || r.codeEditAllowed);
@@ -327,9 +377,12 @@ function handle(r: Room, p: Peer, m: any) {
       r.questionId = q.id;
       const lang = String(m.language || 'javascript');
       const starter = j(q.starter_code, {} as any)[lang];
-      if (starter && m.applyStarter) { const fn = r.activeFile; r.files[fn] = { content: starter, language: lang, version: (r.files[fn]?.version || 0) + 1 }; r.dirtyFiles.add(fn); }
+      let starterUpdate: string | null = null;
+      if (starter && m.applyStarter) { const fn = r.activeFile; if (!r.files[fn]) r.files[fn] = { content: '', language: lang, version: 0 }; r.files[fn].language = lang; starterUpdate = b64(setYText(r, fn, starter)); r.dirtyFiles.add(fn); }
       addEvent(r, 'coding_started', q.title, p.userId);
-      return broadcast(r, { t: 'code-question', question: { id: q.id, title: q.title, prompt: q.prompt }, files: r.files }, undefined, x => x.kind !== 'camera');
+      broadcast(r, { t: 'code-question', question: { id: q.id, title: q.title, prompt: q.prompt }, files: r.files }, undefined, x => x.kind !== 'camera');
+      if (starterUpdate) broadcast(r, { t: 'code-yjs', file: r.activeFile, update: starterUpdate }, undefined, x => x.kind !== 'camera');
+      return;
     }
     case 'code-run': {
       need(p.kind !== 'camera');

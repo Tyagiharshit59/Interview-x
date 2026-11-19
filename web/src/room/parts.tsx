@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import Editor, { type OnMount } from '@monaco-editor/react';
+import { bindYText } from './ycode';
 
 /* ---------- video tile ---------- */
 export function VideoTile({ stream, label, muted, off, screen, badge }: { stream?: MediaStream | null; label: string; muted?: boolean; off?: boolean; screen?: boolean; badge?: string }) {
@@ -100,23 +101,24 @@ export interface CodeFiles { [name: string]: { content: string; language: string
 const LANGS: Array<[string, string]> = [['javascript', 'JavaScript'], ['typescript', 'TypeScript'], ['python', 'Python'], ['java', 'Java'], ['php', 'PHP'], ['c', 'C'], ['cpp', 'C++'], ['csharp', 'C#'], ['sql', 'SQL'], ['go', 'Go'], ['ruby', 'Ruby'], ['rust', 'Rust'], ['kotlin', 'Kotlin'], ['html', 'HTML'], ['css', 'CSS']];
 const EXT: Record<string, string> = { javascript: 'js', typescript: 'ts', python: 'py', java: 'java', php: 'php', c: 'c', cpp: 'cpp', csharp: 'cs', sql: 'sql', go: 'go', ruby: 'rb', rust: 'rs', kotlin: 'kt', html: 'html', css: 'css' };
 
-export function CodePanel({ files, active, setActive, onChange, onRun, onSubmit, onAddFile, readOnly, hasQuestion, result, running, question, isStaff, allowEdit, onToggleEdit, onPaste }: {
-  files: CodeFiles; active: string; setActive: (f: string) => void; onChange: (file: string, content: string, language?: string) => void; onRun: (file: string, stdin: string) => void; onSubmit: (file: string) => void;
+export function CodePanel({ files, active, setActive, onChange, onLanguage, yBus, onRun, onSubmit, onAddFile, readOnly, hasQuestion, result, running, question, isStaff, allowEdit, onToggleEdit, onPaste }: {
+  files: CodeFiles; active: string; setActive: (f: string) => void; onChange: (file: string, content: string) => void; onLanguage: (file: string, language: string) => void; yBus: { subscribe: (fn: (m: any) => void) => () => void; send: (file: string, b64: string) => void; sync: (file: string) => void; epoch: number }; onRun: (file: string, stdin: string) => void; onSubmit: (file: string) => void;
   onAddFile: (name: string) => void; readOnly: boolean; hasQuestion: boolean; result: any; running: boolean; question: any; isStaff: boolean; allowEdit: boolean; onToggleEdit: (v: boolean) => void; onPaste?: () => void;
 }) {
   const editor = useRef<any>(null); const monaco = useRef<any>(null); const [stdin, setStdin] = useState(''); const [preview, setPreview] = useState(false);
-  const file = files[active] || Object.values(files)[0]; const timer = useRef<any>(null); const applying = useRef(false);
-  const mount: OnMount = (ed, m) => { editor.current = ed; monaco.current = m; ed.onDidPaste(() => onPaste?.()); };
-  // Apply remote content with a minimal edit so the local cursor does not jump.
+  const file = files[active] || Object.values(files)[0]; 
+  const [mounted, setMounted] = useState(false); const [ready, setReady] = useState(false);
+  const mount: OnMount = (ed, m) => { editor.current = ed; monaco.current = m; ed.onDidPaste(() => onPaste?.()); setMounted(true); };
+  // Bind the editor to this file's shared CRDT text; rebinds when switching files or after a reconnect.
+  const activeName = file ? Object.keys(files).find(k => files[k] === file) || active : active;
+  const yb = useRef(yBus); yb.current = yBus; const oc = useRef(onChange); oc.current = onChange;
   useEffect(() => {
-    const ed = editor.current; if (!ed || !file) return; const model = ed.getModel(); if (!model) return; const cur = model.getValue();
-    if (cur === file.content) return;
-    let s = 0; const a = cur, b = file.content; while (s < a.length && s < b.length && a[s] === b[s]) s++;
-    let ea = a.length, eb = b.length; while (ea > s && eb > s && a[ea - 1] === b[eb - 1]) { ea--; eb--; }
-    applying.current = true;
-    model.applyEdits([{ range: { startLineNumber: model.getPositionAt(s).lineNumber, startColumn: model.getPositionAt(s).column, endLineNumber: model.getPositionAt(ea).lineNumber, endColumn: model.getPositionAt(ea).column }, text: b.slice(s, eb), forceMoveMarkers: false }]);
-    applying.current = false;
-  }, [file?.content, active]);
+    const ed = editor.current; if (!mounted || !ed || !activeName) return;
+    return bindYText(ed, {
+      file: activeName, subscribe: yb.current.subscribe, sendUpdate: b64 => yb.current.send(activeName, b64), requestSync: () => yb.current.sync(activeName),
+      onText: t => oc.current(activeName, t), onReady: setReady,
+    });
+  }, [mounted, activeName, yBus.epoch]);
   if (!file) return <div className="muted" style={{ padding: 16 }}>No files.</div>;
   const runnable = !['html', 'css'].includes(file.language);
   return (
@@ -125,14 +127,13 @@ export function CodePanel({ files, active, setActive, onChange, onRun, onSubmit,
       <div className="row" style={{ padding: '6px 8px', background: '#131830', gap: 6 }}>
         <div className="rtabs" style={{ border: 'none', flex: 1 }} role="tablist">{Object.keys(files).map(n => <button key={n} role="tab" aria-selected={n === active} className={n === active ? 'active' : ''} onClick={() => setActive(n)}>{n}</button>)}</div>
         <button className="btn sm" onClick={() => { const n = window.prompt('New file name', `file${Object.keys(files).length + 1}.${EXT[file.language] || 'txt'}`); if (n) onAddFile(n); }} disabled={readOnly}>+ File</button>
-        <select aria-label="Language" style={{ width: 130, minHeight: 32, padding: '2px 8px' }} value={file.language} disabled={readOnly} onChange={e => onChange(active, file.content, e.target.value)}>{LANGS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
+        <select aria-label="Language" style={{ width: 130, minHeight: 32, padding: '2px 8px' }} value={file.language} disabled={readOnly} onChange={e => onLanguage(active, e.target.value)}>{LANGS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
         {isStaff && <label className="check small" style={{ color: '#9aa3c7' }}><input type="checkbox" checked={allowEdit} onChange={e => onToggleEdit(e.target.checked)} />Candidate can edit</label>}
       </div>
       {readOnly && <div className="alert warn" style={{ margin: 0, borderRadius: 0 }}>Editing is currently disabled by the interviewer. You can still view the code.</div>}
       <div style={{ flex: 1, minHeight: 120 }}>
-        <Editor theme="vs-dark" path={`${active}`} language={file.language === 'cpp' ? 'cpp' : file.language} defaultValue={file.content} onMount={mount}
-          onChange={v => { if (applying.current || v == null) return; clearTimeout(timer.current); timer.current = setTimeout(() => onChange(active, v), 120); }}
-          options={{ readOnly, minimap: { enabled: false }, fontSize: 14, automaticLayout: true, tabSize: 2, formatOnPaste: true, scrollBeyondLastLine: false, wordWrap: 'on', accessibilitySupport: 'auto' }} />
+        <Editor theme="vs-dark" path={`${active}`} language={file.language === 'cpp' ? 'cpp' : file.language} defaultValue="" onMount={mount}
+          options={{ readOnly: readOnly || !ready, minimap: { enabled: false }, fontSize: 14, automaticLayout: true, tabSize: 2, formatOnPaste: true, scrollBeyondLastLine: false, wordWrap: 'on', accessibilitySupport: 'auto' }} />
       </div>
       <div className="row" style={{ padding: '6px 8px', background: '#131830', gap: 6 }}>
         {runnable ? <><button className="btn sm primary" disabled={running} onClick={() => onRun(active, stdin)}>{running ? 'Running…' : '▶ Run'}</button>{hasQuestion && <button className="btn sm" disabled={running} onClick={() => onSubmit(active)}>✔ Submit</button>}</>

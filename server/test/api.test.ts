@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
 import WebSocket from 'ws';
+import * as Y from 'yjs';
 
 const PORT = 4100;
 const BASE = `http://localhost:${PORT}/api`;
@@ -144,11 +145,25 @@ test('realtime room: waiting room, admit, consent gate for recording, code run',
   // code collaboration + dev runner
   S.ws.send(JSON.stringify({ t: 'interview-start' }));
   C.ws.send(JSON.stringify({ t: 'code-update', file: 'main.js', content: 'console.log(21*2)' }));
-  await until(() => S.msgs.some(m => m.t === 'code-update' && m.content.includes('21*2')));
+  await until(() => S.msgs.some(m => m.t === 'code-yjs'));
   C.ws.send(JSON.stringify({ t: 'code-run', file: 'main.js', stdin: '' }));
   await until(() => S.msgs.some(m => m.t === 'code-result'), 10000);
   const res = S.msgs.find(m => m.t === 'code-result').result;
   assert.equal(res.stdout.trim(), '42');
+  // concurrent editing converges (Yjs CRDT): both sides type at the same time
+  const dS = new Y.Doc(), dC = new Y.Doc();
+  const hookDoc = (d: Y.Doc, me: any) => { d.on('update', (u: Uint8Array, o: any) => { if (o !== 'remote') me.ws.send(JSON.stringify({ t: 'code-yjs', file: 'main.js', update: Buffer.from(u).toString('base64') })); }); };
+  const feed = (d: Y.Doc, me: any) => { let n = 0; return () => { const ms = me.msgs.filter((m: any) => m.t === 'code-yjs'); for (; n < ms.length; n++) Y.applyUpdate(d, new Uint8Array(Buffer.from(ms[n].update, 'base64')), 'remote'); }; };
+  S.ws.send(JSON.stringify({ t: 'code-yjs-sync', file: 'main.js' })); C.ws.send(JSON.stringify({ t: 'code-yjs-sync', file: 'main.js' }));
+  await until(() => S.msgs.some((m: any) => m.t === 'code-yjs' && m.sync) && C.msgs.some((m: any) => m.t === 'code-yjs' && m.sync));
+  const fs_ = feed(dS, S), fc_ = feed(dC, C); fs_(); fc_();
+  assert.equal(dS.getText('c').toString(), dC.getText('c').toString());
+  hookDoc(dS, S); hookDoc(dC, C);
+  const before = dS.getText('c').toString();
+  dS.getText('c').insert(0, '/*S*/'); dC.getText('c').insert(dC.getText('c').length, '/*C*/');
+  const settled = () => { fs_(); fc_(); const a = dS.getText('c').toString(); return a === dC.getText('c').toString() && a.includes('/*S*/') && a.includes('/*C*/'); };
+  await until(settled);
+  assert.equal(dS.getText('c').toString(), '/*S*/' + before + '/*C*/');
   // interviewer locks the editor
   S.ws.send(JSON.stringify({ t: 'code-permission', allow: false }));
   await until(() => C.msgs.some(m => m.t === 'code-permission' && m.allow === false));

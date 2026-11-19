@@ -66,6 +66,6 @@ Single container (API + static web) + persistent volume, behind a TLS proxy. Jud
 | >1 API instance | PostgreSQL; Redis pub/sub for room fan-out (or sticky sessions); move in-memory tickets to Redis |
 | >6 participants / server-side recording | LiveKit SFU + egress; replace `useRoom` with the LiveKit client; remove client recording |
 | Object storage | S3/R2 adapter in `services.ts` (save/open/delete + presigned URLs) |
-| Concurrent code editing | Yjs + `y-monaco` over the existing WS channel |
+| Concurrent code editing | ✅ Yjs over the existing WS channel (custom Monaco binding); add awareness for remote cursors |
 | Background work | Queue (BullMQ/Redis) for emails, parsing, AI, purge |
 | NestJS | Routes are already module-shaped; port each router to a Nest module |
