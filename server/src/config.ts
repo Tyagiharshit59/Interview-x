@@ -32,6 +32,13 @@ export const config = {
     apiKey: process.env.AI_API_KEY || '',
     model: process.env.AI_MODEL || '',
   },
+  // Optional speech-to-text via an OpenAI-compatible /audio/transcriptions endpoint (e.g. OpenAI, Groq, self-hosted faster-whisper server).
+  stt: {
+    baseUrl: process.env.STT_BASE_URL || '',
+    apiKey: process.env.STT_API_KEY || '',
+    model: process.env.STT_MODEL || 'whisper-1',
+    maxBytes: Number(process.env.STT_MAX_MB || 25) * 1048576,
+  },
   razorpay: {
     keyId: process.env.RAZORPAY_KEY_ID || '',
     keySecret: process.env.RAZORPAY_KEY_SECRET || '',

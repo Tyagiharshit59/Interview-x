@@ -1,10 +1,11 @@
+import fs from 'node:fs';
 import { Router } from 'express';
 import { z } from 'zod';
 import { db, uid, now, j } from '../db.js';
 import { config } from '../config.js';
 import { requirePerm, tenant, can } from '../auth.js';
 import { wrap, parse, HttpError, bad, notFound } from '../util.js';
-import { audit, enforce, recordUsage, notify } from '../services.js';
+import { audit, enforce, recordUsage, notify, safeKey } from '../services.js';
 import { isParticipant } from './interviews.js';
 import { DEFAULT_CRITERIA } from './coding.js';
 
@@ -84,6 +85,44 @@ evalRouter.post('/interviews/:id/transcript', requirePerm('interviews.conduct'),
   for (const s of b.segments) db.prepare('INSERT INTO interview_transcripts(id,company_id,interview_id,speaker,text,offset_sec,source,created_at) VALUES (?,?,?,?,?,?,?,?)').run(uid(), tenant(req), i.id, s.speaker, s.text, s.offset_sec, 'manual', now());
   res.status(201).json({ ok: true, count: b.segments.length });
 }));
+/** Automatic speech-to-text of a consented, completed recording. Output is a labelled machine transcript; no speaker identity, emotion or accent analysis. */
+evalRouter.post('/interviews/:id/recordings/:rid/transcribe', requirePerm('interviews.conduct'), wrap(async (req, res) => {
+  const i = iv(req); const cid = tenant(req);
+  if (!isParticipant(i.id, req.auth!.userId) && !['owner', 'admin'].includes(req.auth!.role!)) throw new HttpError(403, 'Not a participant');
+  if (!config.stt.baseUrl || !config.stt.apiKey) throw new HttpError(501, 'Speech-to-text is not configured on this server (set STT_BASE_URL and STT_API_KEY).', 'stt_not_configured');
+  const s = aiGate(req);
+  void s;
+  const r = db.prepare('SELECT * FROM interview_recordings WHERE id=? AND interview_id=? AND company_id=?').get(req.params.rid, i.id, cid) as any;
+  if (!r || r.status !== 'ready' || !r.file_key) throw notFound('Recording not found or not ready');
+  if (r.source === 'secondary_camera') throw bad('The secondary camera is video-only and has no audio to transcribe.');
+  const rec = db.prepare("SELECT granted FROM consent_records WHERE interview_id=? AND company_id=? AND kind='recording' ORDER BY created_at DESC LIMIT 1").get(i.id, cid) as any;
+  if (!rec?.granted) throw new HttpError(403, 'Recording consent is not on record, so this recording cannot be processed.', 'no_consent');
+  if (r.size > config.stt.maxBytes) throw bad(`Recording is larger than the ${Math.round(config.stt.maxBytes / 1048576)} MB speech-to-text limit.`, 'too_large');
+  const buf = fs.readFileSync(safeKey(r.file_key));
+  const form = new FormData();
+  form.append('file', new Blob([buf], { type: r.mime || 'video/webm' }), `recording.${(r.mime || '').includes('mp4') ? 'mp4' : 'webm'}`);
+  form.append('model', config.stt.model);
+  form.append('response_format', 'verbose_json');
+  let data: any;
+  try {
+    const resp = await fetch(`${config.stt.baseUrl.replace(/\/$/, '')}/audio/transcriptions`, { method: 'POST', headers: { Authorization: `Bearer ${config.stt.apiKey}` }, body: form, signal: AbortSignal.timeout(300_000) });
+    if (!resp.ok) throw new Error(`status ${resp.status}`);
+    data = await resp.json();
+  } catch (e: any) { throw new HttpError(502, `The speech-to-text provider failed (${e.message}). Nothing was saved.`, 'stt_failed'); }
+  const segs: Array<{ text: string; start: number }> = (Array.isArray(data.segments) ? data.segments : []).map((g: any) => ({ text: String(g.text || '').trim(), start: Number(g.start) || 0 }))
+    .filter((g: any) => g.text);
+  if (!segs.length && typeof data.text === 'string' && data.text.trim()) segs.push({ text: data.text.trim(), start: 0 });
+  if (!segs.length) throw bad('No speech was detected in this recording.', 'no_speech');
+  const tx = db.transaction(() => {
+    db.prepare("DELETE FROM interview_transcripts WHERE interview_id=? AND company_id=? AND source=?").run(i.id, cid, `stt:${r.id}`);
+    for (const g of segs) db.prepare('INSERT INTO interview_transcripts(id,company_id,interview_id,speaker,text,offset_sec,source,created_at) VALUES (?,?,?,?,?,?,?,?)').run(uid(), cid, i.id, 'Speaker', g.text.slice(0, 4000), g.start, `stt:${r.id}`, now());
+  });
+  tx();
+  recordUsage(cid, 'ai_calls', 1, r.id);
+  audit(cid, req.auth!, 'transcript.generated', i.id, req, { recording: r.id, segments: segs.length });
+  res.status(201).json({ ok: true, count: segs.length, notice: 'Machine-generated transcript. It may contain errors and does not identify speakers; review before relying on it.' });
+}));
+
 evalRouter.get('/interviews/:id/transcript', requirePerm('recordings.view'), wrap((req, res) => {
   const i = iv(req);
   res.json({ items: db.prepare('SELECT speaker,text,offset_sec,source FROM interview_transcripts WHERE interview_id=? AND company_id=? ORDER BY offset_sec, created_at').all(i.id, tenant(req)) });
