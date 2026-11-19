@@ -24,7 +24,8 @@ let transporter: nodemailer.Transporter | null = null;
 if (config.smtp) {
   transporter = nodemailer.createTransport({ host: config.smtp.host, port: config.smtp.port, auth: config.smtp.user ? { user: config.smtp.user, pass: config.smtp.pass } : undefined });
 }
-export async function sendMail(companyId: string | null, to: string, subject: string, body: string) {
+export type MailAttachment = { filename: string; content: string; contentType: string };
+export async function sendMail(companyId: string | null, to: string, subject: string, body: string, attachments?: MailAttachment[]) {
   const id = uid();
   db.prepare('INSERT INTO email_outbox(id,company_id,to_email,subject,body,status,created_at) VALUES (?,?,?,?,?,?,?)').run(id, companyId, to, subject, body, 'queued', now());
   if (!transporter) {
@@ -33,7 +34,7 @@ export async function sendMail(companyId: string | null, to: string, subject: st
     return;
   }
   try {
-    await transporter.sendMail({ from: config.mailFrom, to, subject, text: body });
+    await transporter.sendMail({ from: config.mailFrom, to, subject, text: body, attachments: attachments?.map(a => ({ filename: a.filename, content: a.content, contentType: a.contentType })) });
     db.prepare("UPDATE email_outbox SET status='sent', sent_at=? WHERE id=?").run(now(), id);
   } catch (e: any) {
     db.prepare("UPDATE email_outbox SET status='failed', error=? WHERE id=?").run(String(e?.message || e), id);
@@ -77,8 +78,10 @@ export function periodStart(companyId: string) {
   const s = getSubscription(companyId);
   return s?.current_period_start || new Date(Date.now() - 30 * 864e5).toISOString();
 }
+export const hooks: { usage?: (companyId: string, metric: string) => void } = {};
 export function recordUsage(companyId: string, metric: string, quantity = 1, refId?: string) {
   db.prepare('INSERT INTO usage_records(id,company_id,metric,quantity,ref_id,created_at) VALUES (?,?,?,?,?,?)').run(uid(), companyId, metric, quantity, refId ?? null, now());
+  hooks.usage?.(companyId, metric);
 }
 export function usageTotal(companyId: string, metric: string) {
   const r = db.prepare('SELECT COALESCE(SUM(quantity),0) t FROM usage_records WHERE company_id=? AND metric=? AND created_at>=?').get(companyId, metric, periodStart(companyId)) as any;

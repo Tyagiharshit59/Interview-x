@@ -1,3 +1,4 @@
+import { buildIcs } from '../extras.js';
 import { Router } from 'express';
 import QRCode from 'qrcode';
 import { z } from 'zod';
@@ -46,7 +47,8 @@ function sendInvite(companyId: string, interviewId: string, kind: 'invite' | 're
   const co = db.prepare('SELECT name FROM companies WHERE id=?').get(companyId) as any;
   const when = new Date(i.scheduled_at).toUTCString();
   if (kind === 'cancel') {
-    void sendMail(companyId, cand.email, `Interview cancelled: ${i.title}`, `Hi ${cand.name},\n\nYour interview "${i.title}" with ${co.name} scheduled for ${when} has been cancelled.`);
+    void sendMail(companyId, cand.email, `Interview cancelled: ${i.title}`, `Hi ${cand.name},\n\nYour interview "${i.title}" with ${co.name} scheduled for ${when} has been cancelled.`,
+      [{ filename: 'interview.ics', contentType: 'text/calendar; method=CANCEL', content: buildIcs({ interviewId: i.id, title: `${i.title} — ${co.name}`, start: i.scheduled_at, durationMin: i.duration_min, description: 'Cancelled', method: 'CANCEL', sequence: 99 }) }]);
     return null;
   }
   const link = inviteLink(interviewId, companyId);
@@ -56,7 +58,8 @@ function sendInvite(companyId: string, interviewId: string, kind: 'invite' | 're
     `Hi ${cand.name},\n\n${co.name} has ${kind === 'reschedule' ? 'rescheduled' : 'scheduled'} your interview for ${cand.job_title}.\n\nWhen: ${when} (${i.timezone})\nDuration: ${i.duration_min} minutes\n` +
     `${i.instructions ? `\nInstructions:\n${i.instructions}\n` : ''}\nJoin link (personal to you, please don't share): ${link}\n\nBefore joining: use a laptop with Chrome/Edge/Firefox/Safari, check your camera and microphone, and find a quiet place.` +
     `${cfg.recording ? '\nThis interview may be recorded; you will be asked for consent before recording begins and can decline.' : ''}` +
-    `${cfg.secondaryCamera ? '\nThe interviewer may ask you to optionally share a second camera angle using your phone. This is always optional and requires your explicit consent.' : ''}`);
+    `${cfg.secondaryCamera ? '\nThe interviewer may ask you to optionally share a second camera angle using your phone. This is always optional and requires your explicit consent.' : ''}`,
+    [{ filename: 'interview.ics', contentType: 'text/calendar; method=REQUEST', content: buildIcs({ interviewId: i.id, title: `${i.title} — ${co.name}`, start: i.scheduled_at, durationMin: i.duration_min, description: `Interview with ${co.name}. Join with your personal link: ${link}`, method: 'REQUEST', sequence: kind === 'reschedule' ? Math.floor(Date.now() / 1000) % 1000000 : 0 }) }]);
   return link;
 }
 

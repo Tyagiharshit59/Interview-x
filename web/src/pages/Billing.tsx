@@ -61,7 +61,7 @@ export function InvoiceView() {
   const b = data.billing_snapshot || {};
   return (
     <div className="stack" style={{ maxWidth: 760 }}>
-      <div className="row between"><Link to="/billing">← Billing</Link><Button onClick={() => window.print()}>Print / save PDF</Button></div>
+      <div className="row between"><Link to="/billing">← Billing</Link><span className="row"><a className="btn" href={`/api/invoices/${id}/pdf`}>Download PDF</a><Button onClick={() => window.print()}>Print</Button></span></div>
       <Card>
         <div className="row between"><div><h1 style={{ marginBottom: 0 }}>Tax invoice</h1><div className="muted">{data.number}</div></div>{statusBadge(data.status)}</div>
         <div className="grid g2" style={{ margin: '16px 0' }}><div><b>From</b><br />{data.seller.name}<br />GSTIN: {data.seller.gstin}<br />State: {data.seller.state}<br />SAC: {data.seller.sac}</div><div><b>Billed to</b><br />{b.name}<br />{b.address}<br />State: {b.state || '—'}<br />GSTIN: {b.gst_number || 'Unregistered'}</div></div>

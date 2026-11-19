@@ -1,3 +1,4 @@
+import { invoicePdf } from '../extras.js';
 import { Router } from 'express';
 import express from 'express';
 import crypto from 'node:crypto';
@@ -170,4 +171,13 @@ billingRouter.get('/invoices/:id', requirePerm('billing.manage'), wrap((req, res
     seller: { name: 'IntervueX (placeholder legal entity)', gstin: process.env.SELLER_GSTIN || 'Set SELLER_GSTIN', state: config.homeState, sac: '998314' },
     note: 'Amounts in paise. Confirm invoice format, SAC code and e-invoicing applicability with your tax adviser.',
   });
+}));
+
+billingRouter.get('/invoices/:id/pdf', requirePerm('billing.manage'), wrap(async (req, res) => {
+  const inv = db.prepare('SELECT * FROM invoices WHERE id=? AND company_id=?').get(req.params.id, tenant(req)) as any;
+  if (!inv) throw notFound();
+  const pdf = await invoicePdf(inv);
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="${String(inv.number).replace(/[^A-Za-z0-9_-]/g, '-')}.pdf"`);
+  res.send(pdf);
 }));

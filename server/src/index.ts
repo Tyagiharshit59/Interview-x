@@ -1,3 +1,4 @@
+import { subscriptionNotices } from './extras.js';
 import express from 'express';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
@@ -109,6 +110,7 @@ function backgroundJobs() {
       for (const m of db.prepare("SELECT user_id FROM company_members WHERE company_id=? AND role IN ('owner','admin')").all(s.company_id) as any[])
         notify(s.company_id, m.user_id, 'billing', 'Your free trial ends soon', `Trial ends ${new Date(s.trial_ends_at).toDateString()}. Choose a plan to keep access.`, '/billing', { email: true });
     }
+    subscriptionNotices();
   } catch (e) { console.error('[jobs]', e); }
 }
 import crypto from 'node:crypto';
