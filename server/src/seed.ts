@@ -2,6 +2,7 @@ import bcrypt from 'bcryptjs';
 import crypto from 'node:crypto';
 import { db, uid, now } from './db.js';
 import { config } from './config.js';
+import { syncPlansFromLegacy } from './migrations/index.js';
 
 /** Placeholder plans from the product brief. All values are editable in the Super Admin console. */
 const PLANS = [
@@ -21,6 +22,7 @@ export function ensureSeed() {
     db.prepare('INSERT INTO plans(id,code,name,description,price_monthly,price_yearly,entitlements,overage,is_public,sort_order,trial_days) VALUES (?,?,?,?,?,?,?,?,?,?,14)')
       .run(uid(), p.code, p.name, p.desc, p.m, p.y, JSON.stringify(p.e), JSON.stringify({ interviews: 99, code_runs: 1 }), (p as any).isPublic === false ? 0 : 1, p.sort);
   }
+  syncPlansFromLegacy(db);
   for (const [k, d] of [['ai_assistance', 'AI interview intelligence'], ['secondary_camera', 'QR secondary camera'], ['whiteboard', 'Collaborative whiteboard']] as const) {
     db.prepare('INSERT OR IGNORE INTO feature_flags(key,enabled,description) VALUES (?,1,?)').run(k, d);
   }
@@ -34,7 +36,9 @@ export function ensureSeed() {
       if (config.isProd) { console.warn('[seed] No SUPER_ADMIN_PASSWORD set; super admin was NOT created.'); return; }
       pw = crypto.randomBytes(9).toString('base64url') + '9'; generated = true;
     }
-    db.prepare('INSERT INTO users(id,email,password_hash,name,is_super_admin,email_verified,created_at) VALUES (?,?,?,?,1,1,?)').run(uid(), config.superAdminEmail, bcrypt.hashSync(pw, 12), 'Platform Admin', now());
+    const adminId = uid();
+    db.prepare('INSERT INTO users(id,email,password_hash,name,is_super_admin,email_verified,created_at) VALUES (?,?,?,?,1,1,?)').run(adminId, config.superAdminEmail, bcrypt.hashSync(pw, 12), 'Platform Admin', now());
+    db.prepare("INSERT OR IGNORE INTO internal_staff(user_id,role,status,created_at) VALUES (?,'super_admin','active',?)").run(adminId, now());
     if (generated) console.log(`\n[seed] Super admin created (dev). Email: ${config.superAdminEmail}  Password: ${pw}\n       Set SUPER_ADMIN_PASSWORD in .env to choose your own.\n`);
   }
 }

@@ -9,7 +9,7 @@
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "seed": "tsx src/seed.ts",
-    "test": "tsx --test test/*.test.ts"
+    "test": "tsx --test test/api.test.ts test/migrations.test.ts"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

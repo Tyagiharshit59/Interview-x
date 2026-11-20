@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { config } from './config.js';
+import { runMigrations } from './migrations/index.js';
 
 fs.mkdirSync(path.dirname(config.dbPath), { recursive: true });
 export const db = new Database(config.dbPath);
@@ -219,6 +220,7 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 CREATE INDEX IF NOT EXISTS idx_audit_company ON audit_logs(company_id, created_at);
 `;
 db.exec(SCHEMA);
+runMigrations(db);
 
 export const j = <T = any>(s: string | null | undefined, fallback: T): T => {
   if (!s) return fallback;
