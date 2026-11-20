@@ -31,6 +31,7 @@ export function JobCard({ job, onSaved }: { job: any; onSaved?: () => void }) {
       <div className="flex items-start gap-3.5">
         <CompanyMark name={job.company} />
         <div className="min-w-0 flex-1">
+          {job.job_code && <div className="mb-0.5 font-mono text-[11.5px] font-semibold tracking-wide text-gold-600 dark:text-gold-300">{job.job_code}</div>}
           <div className="truncate text-[16px] font-bold group-hover:text-brand-600 dark:group-hover:text-brand-300">{job.title}</div>
           <div className="mt-0.5 flex items-center gap-1.5 truncate text-[13.5px] text-muted"><Building2 className="h-3.5 w-3.5" />{job.company}</div>
         </div>
@@ -98,7 +99,7 @@ export function JobSearch() {
       <div><div className="text-[11px] font-bold uppercase tracking-[0.16em] text-gold-500">Job search</div><h1 className="mb-0 mt-1">Find your next role</h1></div>
       <form onSubmit={e => { e.preventDefault(); const n = new URLSearchParams(sp); q ? n.set('q', q) : n.delete('q'); loc ? n.set('location', loc) : n.delete('location'); n.delete('page'); setSp(n); }}
         className="flex flex-col gap-2 rounded-2xl border border-line bg-surface p-2 shadow-soft sm:flex-row">
-        <div className="relative flex-1"><Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" /><input value={q} onChange={e => setQ(e.target.value)} placeholder="Job title, skill or keyword" aria-label="Keywords" className="!border-0 !pl-10 !shadow-none" /></div>
+        <div className="relative flex-1"><Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" /><input value={q} onChange={e => setQ(e.target.value)} placeholder="Job ID, title, skill or keyword" aria-label="Keywords" className="!border-0 !pl-10 !shadow-none" /></div>
         <div className="relative sm:w-56"><MapPin className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" /><input value={loc} onChange={e => setLoc(e.target.value)} placeholder="Location" aria-label="Location" className="!border-0 !pl-10 !shadow-none" /></div>
         <Button variant="primary" type="submit">Search</Button>
       </form>
@@ -146,6 +147,7 @@ export function PortalJobDetail() {
               {job.location && <span className="badge"><MapPin className="h-3 w-3" />{job.location}</span>}
               {job.employment_type && <span className="badge"><Briefcase className="h-3 w-3" />{job.employment_type}</span>}
               {(job.exp_min != null || job.exp_max != null) && <span className="badge">{job.exp_min ?? 0}{job.exp_max != null ? `–${job.exp_max}` : '+'} years</span>}
+              {job.job_code && <span className="badge gold font-mono">Job ID {job.job_code}</span>}
               {job.department && <span className="badge">{job.department}</span>}
               <span className="badge"><Clock className="h-3 w-3" />Posted {ago(job.posted_at).toLowerCase()}</span>
             </div>

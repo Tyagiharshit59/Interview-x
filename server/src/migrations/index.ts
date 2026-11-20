@@ -1,6 +1,7 @@
 import { raw, db, now } from '../db.js';
 import { FEATURES, LIMITS, legacyFeatureKeys } from './catalog.js';
 import { DEFAULTS } from '../defaults.js';
+import { derivePrefix, formatJobCode, PREFIX_RE } from '../jobcodes.js';
 
 /**
  * Versioned, forward-only migrations for MongoDB.
@@ -109,6 +110,22 @@ export const MIGRATIONS: Migration[] = [
     up: async () => {
       await idx('referrals', { company_id: 1, referrer_id: 1, created_at: -1 });
       await idx('referrals', { company_id: 1, application_id: 1 });
+    },
+  },
+  {
+    version: 6, name: 'company-defined job IDs (PREFIX-0001) for every job',
+    up: async () => {
+      for (const c of await raw.collection('companies').find().toArray()) {
+        let settings: any = {}; try { settings = JSON.parse(c.settings || '{}'); } catch { /* keep empty */ }
+        const prefix = PREFIX_RE.test(settings.jobCodePrefix || '') ? settings.jobCodePrefix : derivePrefix(c.name);
+        if (settings.jobCodePrefix !== prefix) { settings.jobCodePrefix = prefix; await raw.collection('companies').updateOne({ _id: c._id }, { $set: { settings: JSON.stringify(settings) } }); }
+        let n = Number(c.job_seq) || 0;
+        const jobs = await raw.collection('jobs').find({ company_id: c._id, is_template: { $ne: 1 }, job_code: { $exists: false } }).sort({ created_at: 1, _seq: 1 }).toArray();
+        for (const jb of jobs) { n++; await raw.collection('jobs').updateOne({ _id: jb._id }, { $set: { job_code: formatJobCode(prefix, n) } }); }
+        await raw.collection('companies').updateOne({ _id: c._id }, { $set: { job_seq: n } });
+      }
+      await raw.collection('jobs').createIndex({ company_id: 1, job_code: 1 }, { unique: true, partialFilterExpression: { job_code: { $type: 'string' } } });
+      await raw.collection('jobs').createIndex({ job_code: 1 });
     },
   },
 ];

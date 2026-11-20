@@ -86,7 +86,7 @@ referralRouter.get('/referrals/jobs', requirePerm('referrals.create'), wrap(asyn
   const jobs = await db.jobs.list({ company_id: cid, status: 'published', is_template: { $ne: 1 }, referrals_enabled: { $ne: 0 } }, { sort: { updated_at: -1 } });
   res.json({
     program: prog,
-    items: prog.enabled ? jobs.map(x => ({ id: x.id, title: x.title, department: x.department ?? null, location: x.location ?? null, employment_type: x.employment_type ?? null, exp_min: x.exp_min ?? null, exp_max: x.exp_max ?? null,
+    items: prog.enabled ? jobs.map(x => ({ id: x.id, job_code: x.job_code ?? null, title: x.title, department: x.department ?? null, location: x.location ?? null, employment_type: x.employment_type ?? null, exp_min: x.exp_min ?? null, exp_max: x.exp_max ?? null,
       required_skills: j<string[]>(x.required_skills, []), description: x.description ?? null, responsibilities: x.responsibilities ?? null, bonus: bonusFor(x, prog), posted_at: x.updated_at })) : [],
   });
 }));
@@ -152,7 +152,7 @@ referralRouter.get('/referrals/mine', requirePerm('referrals.create'), wrap(asyn
   const h = await hydrate(cid, rows);
   const sum = (st: string[]) => h.filter(x => st.includes(x.bonus.status)).reduce((s, x) => s + (x.r.bonus_amount || 0), 0);
   res.json({
-    items: h.map(x => ({ id: x.r.id, candidate_name: x.r.candidate_name, job_title: x.job?.title ?? x.r.job_title, relationship: x.r.relationship, created_at: x.r.created_at, status: x.status, bonus: x.bonus })),
+    items: h.map(x => ({ id: x.r.id, candidate_name: x.r.candidate_name, job_code: x.job?.job_code ?? null, job_title: x.job?.title ?? x.r.job_title, relationship: x.r.relationship, created_at: x.r.created_at, status: x.status, bonus: x.bonus })),
     summary: { total: h.length, inProgress: h.filter(x => ['received', 'review', 'interviewing'].includes(x.status.key)).length, hired: h.filter(x => x.status.key === 'hired').length,
       paid: sum(['paid']), upcoming: sum(['pending_waiting', 'eligible']), currency: (await program(cid)).currency },
   });
@@ -167,7 +167,7 @@ referralRouter.get('/referrals', requirePerm('referrals.manage'), wrap(async (re
   for (const x of h) { const l = leaders.get(x.r.referrer_id) || { name: x.r.referrer_name, total: 0, hired: 0 }; l.total++; if (x.status.key === 'hired') l.hired++; leaders.set(x.r.referrer_id, l); }
   res.json({
     items: h.map(x => ({ id: x.r.id, referrer_name: x.r.referrer_name, referrer_id: x.r.referrer_id, candidate_id: x.r.candidate_id, candidate_name: x.r.candidate_name, candidate_email: x.r.candidate_email,
-      job_id: x.r.job_id, job_title: x.job?.title ?? x.r.job_title, stage: x.a?.stage ?? null, relationship: x.r.relationship, note: x.r.note, linkedin: x.r.linkedin, created_at: x.r.created_at, status: x.status, bonus: x.bonus })),
+      job_id: x.r.job_id, job_code: x.job?.job_code ?? null, job_title: x.job?.title ?? x.r.job_title, stage: x.a?.stage ?? null, relationship: x.r.relationship, note: x.r.note, linkedin: x.r.linkedin, created_at: x.r.created_at, status: x.status, bonus: x.bonus })),
     leaderboard: [...leaders.values()].sort((a, b) => b.hired - a.hired || b.total - a.total).slice(0, 10),
     totals: { referrals: h.length, hired: h.filter(x => x.status.key === 'hired').length, toPay: h.filter(x => x.bonus.status === 'eligible').reduce((s, x) => s + (x.r.bonus_amount || 0), 0), paid: h.filter(x => x.bonus.status === 'paid').reduce((s, x) => s + (x.r.bonus_amount || 0), 0) },
   });

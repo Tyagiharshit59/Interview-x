@@ -298,7 +298,7 @@ test('company admin creates an HR account; HR activates via single-use link; HR 
   assert.equal(li.status, 200); assert.equal(li.data.memberships.length, 2);
 });
 
-test('candidate portal: job board, verified-only access, apply, track, shared updates, invited interviews', async () => {
+test('job IDs + invite-only candidate portal: HR invitation, search by ID, apply, track, shared updates, invited interviews', async () => {
   // company publishes a job (listed on the board) and a hidden one
   const job = await A.req('POST', '/jobs', { title: 'Portal React Engineer', location: 'Pune', employment_type: 'Full-time', required_skills: ['react', 'typescript'], preferred_skills: ['node'], screening_questions: ['Notice period?'] });
   assert.equal(job.status, 201);
@@ -306,26 +306,39 @@ test('candidate portal: job board, verified-only access, apply, track, shared up
   const hidden = await A.req('POST', '/jobs', { title: 'Confidential Role', required_skills: ['react'], public_listing: false });
   await A.req('POST', `/jobs/${hidden.data.id}/status`, { status: 'published' });
 
-  // anonymous job search
+  // every non-template job gets a company-defined ID; staff can search by it
+  assert.match(job.data.job_code, /^[A-Z0-9]{2,8}-\d{4}$/);
+  const byCode = await A.req('GET', `/jobs?q=${job.data.job_code}`);
+  assert.deepEqual(byCode.data.items.map((x: any) => x.id), [job.data.id]);
+
+  // the portal is invite-only: no anonymous browsing, no self sign-up
   const P = new Client();
-  const search = await P.req('GET', '/portal/jobs?q=react');
-  assert.equal(search.status, 200);
-  assert.ok(search.data.items.some((x: any) => x.id === job.data.id));
-  assert.ok(!search.data.items.some((x: any) => x.id === hidden.data.id), 'opted-out jobs are not listed');
-  assert.equal((await P.req('GET', `/portal/jobs/${hidden.data.id}`)).status, 404);
+  assert.equal((await P.req('GET', '/portal/jobs?q=react')).status, 401);
+  assert.equal((await P.req('POST', '/portal/auth/register', { name: 'Ravi Kumar', email: 'ravi@mail.test', password: 'RaviPassw0rd' })).status, 403);
   assert.equal((await P.req('GET', '/portal/applications')).status, 401, 'portal data needs a candidate session');
 
-  // candidate signs up; staff session cookies and candidate cookies are separate
-  const reg = await P.req('POST', '/portal/auth/register', { name: 'Ravi Kumar', email: 'Ravi@Mail.test', password: 'RaviPassw0rd' });
-  assert.equal(reg.status, 201); assert.equal(reg.data.emailVerified, false);
+  // HR registers the candidate and sends the "complete your profile" invitation
+  const added = await A.req('POST', '/candidates', { name: 'Ravi Kumar', email: 'Ravi@Mail.test', current_title: 'Frontend Engineer', skills: ['react'], invite_to_portal: true });
+  assert.equal(added.status, 201); assert.ok(added.data.portalInvite.devInviteUrl);
+  const invTok = new URL(added.data.portalInvite.devInviteUrl).searchParams.get('token');
+  const invInfo = await P.req('GET', `/portal/invite/${invTok}`);
+  assert.equal(invInfo.data.company, 'Acme Corp'); assert.equal(invInfo.data.hasAccount, false);
+  const reg = await P.req('POST', `/portal/invite/${invTok}`, { password: 'RaviPassw0rd' });
+  assert.equal(reg.status, 201); assert.equal(reg.data.emailVerified, true, 'the emailed link verifies the address');
+  assert.equal(reg.data.headline, 'Frontend Engineer', 'profile is prefilled from what HR entered');
+  assert.equal((await P.req('POST', `/portal/invite/${invTok}`, { password: 'RaviPassw0rd' })).status, 400, 'invitation links are single-use');
+  assert.equal((await A.req('GET', `/candidates/${added.data.id}/portal`)).data.joined, true);
   assert.equal((await P.req('GET', '/jobs')).status, 401, 'a candidate session cannot use staff APIs');
   assert.equal((await A.req('GET', '/portal/me')).status, 401, 'a staff session is not a candidate session');
 
-  // unverified: cannot apply, and sees no company data
+  // signed-in search: listed jobs only, findable by job ID
+  const search = await P.req('GET', '/portal/jobs?q=react');
+  assert.ok(search.data.items.some((x: any) => x.id === job.data.id));
+  assert.ok(!search.data.items.some((x: any) => x.id === hidden.data.id), 'opted-out jobs are not listed');
+  const codeSearch = await P.req('GET', `/portal/jobs?q=${job.data.job_code.toLowerCase()}`);
+  assert.equal(codeSearch.data.items[0].job_code, job.data.job_code);
+  assert.equal((await P.req('GET', `/portal/jobs/${hidden.data.id}`)).status, 404);
   await P.req('PATCH', '/portal/profile', { skills: ['react', 'typescript', 'css'], headline: 'Frontend Engineer', experience_years: 4 });
-  assert.equal((await P.req('POST', `/portal/jobs/${job.data.id}/apply`, { answers: [{ question: 'Notice period?', answer: '30 days' }] })).status, 403);
-  const tok = new URL(reg.data.devVerifyUrl).searchParams.get('token');
-  assert.equal((await P.req('POST', '/portal/auth/verify', { token: tok })).status, 200);
 
   // recommendations use profile skills
   const rec = await P.req('GET', '/portal/recommendations');
@@ -340,7 +353,7 @@ test('candidate portal: job board, verified-only access, apply, track, shared up
   // the company sees the applicant
   const cl = await A.req('GET', '/candidates?q=ravi');
   const cand = cl.data.items.find((c: any) => c.email.toLowerCase() === 'ravi@mail.test');
-  assert.ok(cand); assert.equal(cand.source, 'portal');
+  assert.ok(cand); assert.equal(cand.account_id, reg.data.id, 'the company record is linked to the portal profile');
 
   // staff share an update; internal scores/notes are not exposed to the candidate
   assert.equal((await A.req('POST', `/applications/${ap.data.applicationId}/updates`, { message: 'Thanks Ravi, we are reviewing your profile.' })).status, 201);
@@ -360,8 +373,8 @@ test('candidate portal: job board, verified-only access, apply, track, shared up
   assert.equal((await P.req('POST', `/portal/interviews/${iv.data.id}/ticket`)).status, 425, 'room not open yet');
   // another candidate cannot see or join it
   const Q = new Client();
-  const r2 = await Q.req('POST', '/portal/auth/register', { name: 'Other Person', email: 'other@mail.test', password: 'OtherPassw0rd' });
-  await Q.req('POST', '/portal/auth/verify', { token: new URL(r2.data.devVerifyUrl).searchParams.get('token') });
+  const other = await A.req('POST', '/candidates', { name: 'Other Person', email: 'other@mail.test', invite_to_portal: true });
+  await Q.req('POST', `/portal/invite/${new URL(other.data.portalInvite.devInviteUrl).searchParams.get('token')}`, { password: 'OtherPassw0rd' });
   assert.equal((await Q.req('GET', '/portal/interviews')).data.upcoming.length, 0);
   assert.equal((await Q.req('POST', `/portal/interviews/${iv.data.id}/ticket`)).status, 404);
 

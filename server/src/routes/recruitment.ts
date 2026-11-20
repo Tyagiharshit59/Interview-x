@@ -1,4 +1,6 @@
 import { Router } from 'express';
+import { nextJobCode } from '../jobcodes.js';
+import { sendPortalInvite } from './portal.js';
 import multer from 'multer';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -46,7 +48,7 @@ recruitRouter.get('/jobs', requirePerm('jobs.read'), wrap(async (req, res) => {
   const cid = tenant(req);
   const filter: any = { company_id: cid, is_template: templates ? 1 : 0 };
   if (status) filter.status = status;
-  if (q) { const rx = { $regex: escapeRegex(q), $options: 'i' }; filter.$or = [{ title: rx }, { department: rx }]; }
+  if (q) { const rx = { $regex: escapeRegex(q.trim()), $options: 'i' }; filter.$or = [{ title: rx }, { department: rx }, { job_code: rx }]; }
   const rows = await db.jobs.list(filter, { sort: { updated_at: -1 }, limit: 200 });
   const counts = rows.length ? await db.applications.aggregate([
     { $match: { company_id: cid, job_id: { $in: rows.map(r => r.id) } } }, { $group: { _id: '$job_id', n: { $sum: 1 } } },
@@ -67,8 +69,9 @@ recruitRouter.post('/jobs', requirePerm('jobs.write'), wrap(async (req, res) => 
   const b = parse(jobBody, req.body);
   await validateInterviewers(tenant(req), b.interviewer_ids);
   const t = now();
+  const job_code = b.is_template ? null : await nextJobCode(tenant(req));
   const id = await db.jobs.insert({
-    company_id: tenant(req), title: b.title, department: b.department ?? null, location: b.location ?? null, employment_type: b.employment_type ?? null,
+    company_id: tenant(req), job_code, title: b.title, department: b.department ?? null, location: b.location ?? null, employment_type: b.employment_type ?? null,
     exp_min: b.exp_min ?? null, exp_max: b.exp_max ?? null, description: b.description ?? null, responsibilities: b.responsibilities ?? null, qualifications: b.qualifications ?? null,
     required_skills: JSON.stringify(b.required_skills), preferred_skills: JSON.stringify(b.preferred_skills), screening_questions: JSON.stringify(b.screening_questions),
     status: 'draft', is_template: +b.is_template, public_listing: +b.public_listing, referrals_enabled: +b.referrals_enabled, referral_bonus: b.referral_bonus ?? null, recruiter_id: b.recruiter_id ?? req.auth!.userId, interviewer_ids: JSON.stringify(b.interviewer_ids),
@@ -114,7 +117,7 @@ recruitRouter.post('/jobs/:id/duplicate', requirePerm('jobs.write'), wrap(async 
   const { asTemplate } = parse(z.object({ asTemplate: z.boolean().default(false) }), req.body ?? {});
   const t = now();
   const id = await db.jobs.insert({
-    company_id: cur.company_id, title: asTemplate ? cur.title : `${cur.title} (copy)`, department: cur.department ?? null, location: cur.location ?? null, employment_type: cur.employment_type ?? null,
+    company_id: cur.company_id, job_code: asTemplate ? null : await nextJobCode(cur.company_id), title: asTemplate ? cur.title : `${cur.title} (copy)`, department: cur.department ?? null, location: cur.location ?? null, employment_type: cur.employment_type ?? null,
     exp_min: cur.exp_min ?? null, exp_max: cur.exp_max ?? null, description: cur.description ?? null, responsibilities: cur.responsibilities ?? null, qualifications: cur.qualifications ?? null,
     required_skills: cur.required_skills ?? '[]', preferred_skills: cur.preferred_skills ?? '[]', screening_questions: cur.screening_questions ?? '[]',
     status: 'draft', is_template: +asTemplate, recruiter_id: cur.recruiter_id ?? null, interviewer_ids: cur.interviewer_ids ?? '[]',
@@ -151,6 +154,7 @@ const candBody = z.object({
   current_title: z.string().max(120).nullish(), current_company: z.string().max(120).nullish(), location: z.string().max(120).nullish(),
   experience_years: z.number().min(0).max(60).nullish(), skills: z.array(z.string().max(40)).max(60).default([]), tags: z.array(z.string().max(30)).max(20).default([]),
   source: z.string().max(60).nullish(), jobId: z.string().nullish(),
+  invite_to_portal: z.boolean().default(false), // email the candidate a link to complete their IntervueX Careers profile
 });
 const candOut = (r: any) => ({ ...r, skills: j(r.skills, []), tags: j(r.tags, []) });
 
@@ -207,7 +211,9 @@ recruitRouter.post('/candidates', requirePerm('candidates.write'), wrap(async (r
     });
   } catch (e) { if (isDuplicateKey(e)) throw new HttpError(409, 'A candidate with this email already exists', 'duplicate'); throw e; }
   await audit(tenant(req), req.auth!, 'candidate.created', id, req);
-  res.status(201).json(candOut(await db.candidates.get({ id })));
+  const created = await db.candidates.get({ id });
+  const invite = b.invite_to_portal ? await sendPortalInvite(tenant(req), created, req.auth!) : null;
+  res.status(201).json({ ...candOut(await db.candidates.get({ id })), portalInvite: invite });
 }));
 
 recruitRouter.post('/candidates/import', requirePerm('candidates.write'), wrap(async (req, res) => {

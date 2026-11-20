@@ -44,7 +44,7 @@ export function PortalLayout() {
       <Icon className="h-4 w-4" />{label}
     </NavLink>
   );
-  const links = me ? <>{link('/portal/dashboard', 'Dashboard', LayoutDashboard)}{link('/portal/jobs', 'Find jobs', Search)}{link('/portal/applications', 'Applications', FileText)}{link('/portal/interviews', 'Interviews', CalendarDays)}{link('/portal/saved', 'Saved', Bookmark)}</> : link('/portal/jobs', 'Find jobs', Search);
+  const links = me ? <>{link('/portal/dashboard', 'Dashboard', LayoutDashboard)}{link('/portal/jobs', 'Find jobs', Search)}{link('/portal/applications', 'Applications', FileText)}{link('/portal/interviews', 'Interviews', CalendarDays)}{link('/portal/saved', 'Saved', Bookmark)}</> : null;
   const initials = (me?.name || '?').split(' ').map(s => s[0]).slice(0, 2).join('').toUpperCase();
   return (
     <div className="min-h-full">
@@ -62,14 +62,14 @@ export function PortalLayout() {
               <button className="btn icon ghost" aria-label="Sign out" title="Sign out" onClick={async () => { await logout(); nav('/portal'); }}><LogOut className="h-4 w-4" /></button>
             </div>
           ) : (
-            <div className="hidden items-center gap-2 sm:flex"><Link to="/portal/login" className="rounded-lg px-3 py-2 text-[14px] font-semibold text-muted hover:text-ink">Sign in</Link><Link to="/portal/register" className="btn primary">Create profile</Link></div>
+            <div className="hidden items-center gap-2 sm:flex"><Link to="/portal/login" className="btn primary">Sign in</Link></div>
           )}
           <button className="btn icon ghost lg:hidden" onClick={() => setOpen(o => !o)} aria-label="Menu">{open ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}</button>
         </div>
         {open && (
           <div className="border-t border-line bg-surface px-5 py-3 lg:hidden">
             <nav className="flex flex-col gap-1">{links}{me ? <>{link('/portal/profile', 'Profile', UserRound)}<button className="btn ghost justify-start" onClick={async () => { await logout(); setOpen(false); nav('/portal'); }}><LogOut className="h-4 w-4" />Sign out</button></>
-              : <div className="mt-2 flex gap-2"><Link to="/portal/login" className="btn flex-1" onClick={() => setOpen(false)}>Sign in</Link><Link to="/portal/register" className="btn primary flex-1" onClick={() => setOpen(false)}>Create profile</Link></div>}</nav>
+              : <div className="mt-2 flex gap-2"><Link to="/portal/login" className="btn primary flex-1" onClick={() => setOpen(false)}>Sign in</Link></div>}</nav>
           </div>
         )}
       </header>
@@ -109,10 +109,10 @@ function AuthFrame({ title, subtitle, children, foot }: { title: string; subtitl
         <div className="pointer-events-none absolute -left-24 -top-24 h-96 w-96 rounded-full bg-brand-500/30 blur-3xl" />
         <div className="pointer-events-none absolute -bottom-32 -right-16 h-96 w-96 rounded-full bg-gold-400/15 blur-3xl" />
         <div className="relative max-w-lg">
-          <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-gold-300">For job seekers</div>
+          <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-gold-300">For invited candidates</div>
           <h2 className="mt-4 font-display text-[2.4rem] font-semibold leading-[1.1] text-white">Your next role, and every interview, in one place.</h2>
           <ul className="mt-8 flex list-none flex-col gap-3.5 p-0 text-[15px] text-slate-300">
-            {['Jobs matched to your skills', 'One-click apply with your saved profile and CV', 'Track every application and read company updates', 'Join interviews you are invited to, right from here'].map(t => (
+            {['Complete the profile the hiring team started for you', 'Track every application and read company updates', 'Join interviews you are invited to, right from here', 'Discover more roles matched to your skills'].map(t => (
               <li key={t} className="flex items-start gap-3"><span className="mt-0.5 grid h-5 w-5 flex-none place-items-center rounded-full bg-gold-gradient"><Check className="h-3 w-3 text-midnight-950" strokeWidth={3} /></span>{t}</li>
             ))}
           </ul>
@@ -127,7 +127,7 @@ export function PortalLogin() {
   const [f, setF] = useState({ email: '', password: '' }); const [err, setErr] = useState<unknown>(null); const [busy, setBusy] = useState(false);
   const submit = async (e: FormEvent) => { e.preventDefault(); setBusy(true); setErr(null); try { setMe(await post('/portal/auth/login', f)); nav(loc.state?.from || '/portal/dashboard', { replace: true }); } catch (x) { setErr(x); } finally { setBusy(false); } };
   return (
-    <AuthFrame title="Welcome back" subtitle="Sign in to your careers profile." foot={<>New here? <Link to="/portal/register">Create your profile</Link><br /><span className="text-[12.5px]">Hiring team member? <Link to="/login">Company sign in</Link></span></>}>
+    <AuthFrame title="Welcome back" subtitle="Sign in to your careers profile." foot={<>New here? Your profile is created when a company invites you. Check your email for the invitation.<br /><span className="text-[12.5px]">Hiring team member? <Link to="/login">Company sign in</Link></span></>}>
       <form className="stack" onSubmit={submit}>
         <ErrorBox error={err} />
         <Field label="Email"><input type="email" autoComplete="username" required value={f.email} onChange={e => setF({ ...f, email: e.target.value })} /></Field>
@@ -139,19 +139,32 @@ export function PortalLogin() {
   );
 }
 
+/** Candidates join only through the invitation HR sends when adding them. */
 export function PortalRegister() {
-  const { setMe } = useCand(); const nav = useNavigate();
-  const [f, setF] = useState({ name: '', email: '', password: '' }); const [err, setErr] = useState<any>(null); const [busy, setBusy] = useState(false);
-  const fe = (p: string) => err?.details?.find?.((d: any) => d.path === p)?.message;
-  const submit = async (e: FormEvent) => { e.preventDefault(); setBusy(true); setErr(null); try { const r = await post('/portal/auth/register', f); setMe(r); nav('/portal/profile?welcome=1', { replace: true, state: { devVerifyUrl: r.devVerifyUrl } }); } catch (x) { setErr(x); } finally { setBusy(false); } };
   return (
-    <AuthFrame title="Create your profile" subtitle="Free for job seekers. Takes a minute." foot={<>Already have a profile? <Link to="/portal/login">Sign in</Link></>}>
-      <form className="stack" onSubmit={submit}>
+    <AuthFrame title="Profiles are by invitation" subtitle="IntervueX Careers profiles are created when a hiring company adds you as a candidate." foot={<>Already have a profile? <Link to="/portal/login">Sign in</Link></>}>
+      <div className="alert">Look for an email titled “…invites you to complete your profile” from the company you're interviewing with, and open the link in it. If it has expired, ask the recruiter to send a new one.</div>
+    </AuthFrame>
+  );
+}
+
+export function PortalAccept() {
+  const [sp] = useSearchParams(); const token = sp.get('token') || ''; const { setMe } = useCand(); const nav = useNavigate();
+  const [info, setInfo] = useState<any>(null); const [err, setErr] = useState<any>(null); const [busy, setBusy] = useState(false); const [f, setF] = useState({ password: '', confirm: '' });
+  useEffect(() => { get(`/portal/invite/${token}`).then(setInfo).catch(setErr); }, [token]);
+  if (err && !info) return <AuthFrame title="Invitation problem" foot={<Link to="/portal/login">Go to sign in</Link>}><ErrorBox error={err} /></AuthFrame>;
+  if (!info) return <AuthFrame title="Your invitation"><p className="muted">Checking your link…</p></AuthFrame>;
+  if (info.hasAccount) return <AuthFrame title="You already have a profile" foot={<Link to="/portal/forgot-password">Forgot password?</Link>}><div className="alert ok">{info.company} has been linked to your existing profile.</div><Link className="btn primary" to="/portal/login">Sign in</Link></AuthFrame>;
+  const mismatch = f.confirm.length > 0 && f.password !== f.confirm;
+  const fe = (p: string) => err?.details?.find?.((d: any) => d.path === p)?.message;
+  return (
+    <AuthFrame title={`Welcome, ${String(info.name || '').split(' ')[0]}`} subtitle={<><b className="text-ink">{info.company}</b> invited you to complete your candidate profile. Set a password to get started.</>} foot={<>Already have a profile? <Link to="/portal/login">Sign in</Link></>}>
+      <form className="stack" onSubmit={async e => { e.preventDefault(); if (mismatch) return; setBusy(true); setErr(null); try { setMe(await post(`/portal/invite/${token}`, { password: f.password })); nav('/portal/profile?welcome=1', { replace: true }); } catch (x) { setErr(x); } finally { setBusy(false); } }}>
         {err && !err.details && <ErrorBox error={err} />}
-        <Field label="Full name" error={fe('name')}><input required autoComplete="name" value={f.name} onChange={e => setF({ ...f, name: e.target.value })} /></Field>
-        <Field label="Email" hint="Use the email companies contact you on, so invited interviews show up here" error={fe('email')}><input type="email" required autoComplete="username" value={f.email} onChange={e => setF({ ...f, email: e.target.value })} /></Field>
-        <Field label="Password" hint="At least 8 characters, with a letter and a number" error={fe('password')}><input type="password" required autoComplete="new-password" value={f.password} onChange={e => setF({ ...f, password: e.target.value })} /></Field>
-        <Button variant="primary" busy={busy} type="submit" className="!min-h-[48px] w-full">Create profile</Button>
+        <Field label="Email"><input value={info.email} disabled /></Field>
+        <Field label="Create a password" hint="At least 8 characters, with a letter and a number" error={fe('password')}><input type="password" required autoFocus autoComplete="new-password" value={f.password} onChange={e => setF({ ...f, password: e.target.value })} /></Field>
+        <Field label="Confirm password" error={mismatch ? 'Passwords do not match' : undefined}><input type="password" required autoComplete="new-password" value={f.confirm} onChange={e => setF({ ...f, confirm: e.target.value })} /></Field>
+        <Button variant="primary" busy={busy} type="submit" className="!min-h-[48px] w-full" disabled={mismatch}>Create my profile</Button>
       </form>
     </AuthFrame>
   );

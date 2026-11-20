@@ -27,7 +27,7 @@ export function CandidatesList() {
 }
 
 function AddCandidate({ onClose, onDone, defaultJob }: { onClose: () => void; onDone: () => void; defaultJob: string }) {
-  const [f, setF] = useState<any>({ name: '', email: '', phone: '', current_title: '', experience_years: '', skills: [], jobId: defaultJob });
+  const [f, setF] = useState<any>({ name: '', email: '', phone: '', current_title: '', experience_years: '', skills: [], jobId: defaultJob, invite_to_portal: true });
   const [err, setErr] = useState<any>(null); const [busy, setBusy] = useState(false); const file = useRef<File | null>(null);
   const { data: jobs } = useLoad(() => get('/jobs'));
   const prefill = async (fl?: File | null) => {
@@ -42,10 +42,12 @@ function AddCandidate({ onClose, onDone, defaultJob }: { onClose: () => void; on
         try {
           const c = await post('/candidates', { ...f, experience_years: f.experience_years === '' ? null : Number(f.experience_years), jobId: f.jobId || null });
           if (file.current) await upload(`/candidates/${c.id}/resume`, file.current);
+          if (c.portalInvite?.devInviteUrl) window.prompt('Development only (email not configured): profile invitation link for the candidate', c.portalInvite.devInviteUrl);
           onDone();
         } catch (x) { setErr(x); } finally { setBusy(false); }
       }}>
         {err && !err.details && <ErrorBox error={err} />}
+        <label className="check rounded-xl border border-brand-200/60 bg-brand-500/[0.05] p-3 dark:border-brand-800"><input type="checkbox" checked={f.invite_to_portal} onChange={e => setF({ ...f, invite_to_portal: e.target.checked })} /><span><b>Invite to complete their profile</b><br /><span className="muted small">We email a secure link so the candidate can set a password on IntervueX Careers, upload their CV, track this application and join interviews.</span></span></label>
         <Field label="Resume (optional)" hint="PDF, DOC, DOCX or TXT up to 8 MB. We pre-fill details; please review."><input type="file" accept=".pdf,.doc,.docx,.txt" onChange={e => prefill(e.target.files?.[0])} /></Field>
         <div className="grid g2">
           <Field label="Full name" error={fe('name')}><input required value={f.name} onChange={e => setF({ ...f, name: e.target.value })} /></Field>
@@ -98,6 +100,7 @@ export function CandidateProfile() {
     <div className="stack">
       <div className="row between"><div><h1 style={{ marginBottom: 2 }}>{c.name}</h1><div className="muted">{c.current_title || 'Candidate'} · {c.email}{c.phone ? ` · ${c.phone}` : ''}</div></div>
         <div className="row">{can('candidates.write') && ['owner', 'admin'].includes(me?.role || '') && <Button variant="danger" size="sm" onClick={async () => { if (await confirm('Permanently delete this candidate, their resumes, interviews and recordings? This cannot be undone.')) { await del(`/candidates/${id}`); toast('Candidate data deleted'); nav('/candidates'); } }}>Delete data</Button>}</div></div>
+      <PortalInviteBar candidateId={id!} />
       <div className="chips">{c.skills.map((s: string) => <span key={s} className="chip">{s}</span>)}{c.experience_years != null && <Badge>{c.experience_years} yrs experience</Badge>}</div>
       <div className="grid g2">
         <Card title="Resumes" actions={can('candidates.write') && <><input ref={fileRef} type="file" accept=".pdf,.doc,.docx,.txt" style={{ display: 'none' }} onChange={async e => { const f = e.target.files?.[0]; if (!f) return; try { const r = await upload(`/candidates/${id}/resume`, f); toast(`Uploaded. Found ${r.extractedSkills.length} skills.`); void reload(); } catch (x: any) { toast(x.message, 'error'); } }} /><Button size="sm" onClick={() => fileRef.current?.click()}>Upload</Button></>}>
@@ -161,5 +164,22 @@ function ShareUpdate({ app, onClose }: { app: any; onClose: () => void }) {
         {data?.items.length > 0 && <div className="stack gap-sm"><b>Previously shared</b>{data.items.map((u: any) => <div key={u.id} className="rounded-xl border border-line p-3 text-[14px]"><div className="mb-1 flex items-center gap-2"><Badge kind={u.kind === 'feedback' ? 'gold' as any : 'info'}>{u.kind === 'feedback' ? 'Feedback' : 'Update'}</Badge><span className="small muted">{u.author_name} · {fmtDate(u.created_at)}</span></div><div style={{ whiteSpace: 'pre-wrap' }}>{u.message}</div></div>)}</div>}
       </div>
     </Modal>
+  );
+}
+
+/** Shows whether the candidate has joined IntervueX Careers, and lets HR send or resend the profile invitation. */
+function PortalInviteBar({ candidateId }: { candidateId: string }) {
+  const { can } = useAuth(); const toast = useToast();
+  const { data, reload } = useLoad(() => get(`/candidates/${candidateId}/portal`), [candidateId]);
+  if (!data) return null;
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-line bg-surface px-4 py-3 shadow-soft">
+      <div className="text-[14px]"><b>Candidate profile:</b>{' '}
+        {data.joined ? <span className="text-ok">joined IntervueX Careers{data.joinedAt ? ` on ${fmtDate(data.joinedAt, { dateStyle: 'medium' })}` : ''}. They can see shared updates and join interviews.</span>
+          : data.invitedAt ? <span className="text-muted">invitation sent {fmtDate(data.invitedAt, { dateStyle: 'medium' })}, not completed yet.</span>
+          : <span className="text-muted">not invited yet.</span>}
+      </div>
+      {!data.joined && can('candidates.write') && <Button size="sm" variant={data.invitedAt ? undefined : 'primary'} onClick={async () => { try { const r = await post(`/candidates/${candidateId}/portal-invite`); toast(r.existingAccount ? 'They already have a profile; we let them know' : 'Profile invitation sent'); if (r.devInviteUrl) window.prompt('Development only (email not configured): invitation link', r.devInviteUrl); void reload(); } catch (x: any) { toast(x.message, 'error'); } }}>{data.invitedAt ? 'Resend invitation' : 'Invite to complete profile'}</Button>}
+    </div>
   );
 }

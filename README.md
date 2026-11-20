@@ -24,8 +24,11 @@ Open http://localhost:5173 and **Start free trial** to create a company. A 14-da
 * **Payments:** without Razorpay keys the Billing page uses a dev-only payment simulator.
 * **Camera/mic** work on `localhost`. On any other host you need HTTPS.
 
-### Careers portal for job seekers
-Open http://localhost:5173/portal. Job seekers create their own profile (separate from company accounts), search and save jobs, get skill-based recommendations, apply with their CV, track applications, read updates a company shares, and join interviews they were invited to. Company data is shown only for the candidate's **verified** email. Published jobs are listed unless "List on the public careers portal" is unticked in the job editor.
+### Candidate portal (invite-only)
+There is no public sign-up and no job-seeker link on the IntervueX home page. When HR adds a candidate (Candidates → Add candidate, "Invite to complete their profile" is ticked by default) or clicks **Invite to complete profile** on a candidate page, the candidate gets a single-use 14-day link to /portal/accept, sets a password and lands on a profile prefilled with what HR entered. Signed-in candidates can complete their profile/CV, search and apply to listed jobs, track applications, read shared updates and join the interviews they were invited to.
+
+### Job IDs
+Every job gets a readable ID such as INFO-0001: a company-defined prefix (Settings → Company → Job ID prefix) plus a per-company counter. IDs never change or get reused. Search by Job ID works in Jobs, the candidate portal and Refer & earn.
 
 ### Employee referral portal
 HR or admins add employees in **Team → Add team member** (role *Employee*) or **Referral programme → Employees**; there is no self sign-up. Employees activate with a one-time link, then see only **Refer & earn** and **My referrals**: open roles with bonuses, a refer form (with consent and optional CV) and the progress and bonus status of their referrals. HR manages bonuses (ready → paid / declined), the leaderboard and programme rules in **Referral programme**; per-job bonuses are set in the job editor. Employee accounts cannot reach any hiring data (server-side default deny) and do not use paid team seats.

@@ -27,12 +27,13 @@ function CompanyTab() {
     <div className="flex flex-col gap-5">
     <TeamAccountsCard />
     <Card title="Company profile & billing details">
-      <form className="stack" onSubmit={async e => { e.preventDefault(); setErr(null); try { await patch('/company', { name: f.name, website: f.website || null, industry: f.industry || null, size: f.size || null, gst_number: f.gst_number || null, billing_address: f.billing_address || null, state: f.state || null }); toast('Saved'); void refresh(); } catch (x) { setErr(x); } }}>
+      <form className="stack" onSubmit={async e => { e.preventDefault(); setErr(null); try { await patch('/company', { ...(f.settings?.jobCodePrefix ? { settings: { jobCodePrefix: f.settings.jobCodePrefix } } : {}), name: f.name, website: f.website || null, industry: f.industry || null, size: f.size || null, gst_number: f.gst_number || null, billing_address: f.billing_address || null, state: f.state || null }); toast('Saved'); void refresh(); } catch (x) { setErr(x); } }}>
         <ErrorBox error={err} />
         <div className="grid g2"><Field label="Company name"><input required value={f.name} onChange={e => set('name', e.target.value)} /></Field><Field label="Website"><input value={f.website || ''} onChange={e => set('website', e.target.value)} /></Field>
           <Field label="Industry"><input value={f.industry || ''} onChange={e => set('industry', e.target.value)} /></Field><Field label="Company size"><select value={f.size || ''} onChange={e => set('size', e.target.value)}><option value="">—</option><option>1-10</option><option>11-50</option><option>51-200</option><option>201-1000</option><option>1000+</option></select></Field>
           <Field label="GSTIN (India)" hint="Printed on GST invoices"><input value={f.gst_number || ''} onChange={e => set('gst_number', e.target.value.toUpperCase())} maxLength={15} /></Field>
-          <Field label="State" hint="Decides CGST+SGST vs IGST"><input value={f.state || ''} onChange={e => set('state', e.target.value)} /></Field></div>
+          <Field label="State" hint="Decides CGST+SGST vs IGST"><input value={f.state || ''} onChange={e => set('state', e.target.value)} /></Field>
+          <Field label="Job ID prefix" hint={`2–8 letters or digits. New jobs get IDs like ${(f.settings?.jobCodePrefix || 'JOB').toUpperCase()}-${(f.nextJobCode || '-0001').split('-').pop()}. Existing job IDs never change.`}><input value={f.settings?.jobCodePrefix || ''} maxLength={8} onChange={e => setF({ ...f, settings: { ...f.settings, jobCodePrefix: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '') } })} className="font-mono uppercase" /></Field></div>
         <Field label="Billing address"><textarea value={f.billing_address || ''} onChange={e => set('billing_address', e.target.value)} /></Field>
         <div><Button variant="primary" type="submit">Save</Button></div>
       </form>

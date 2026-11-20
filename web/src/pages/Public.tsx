@@ -12,7 +12,6 @@ function PubNav() {
       <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-5 py-3.5 sm:px-8">
         <Logo />
         <nav className="flex items-center gap-1.5 sm:gap-3">
-          <Link to="/portal" className="rounded-lg px-3 py-2 text-[14px] font-semibold text-muted hover:text-ink">Find jobs</Link>
           <Link to="/pricing" className="rounded-lg px-3 py-2 text-[14px] font-semibold text-muted hover:text-ink">Pricing</Link>
           {me ? <Link className="btn primary" to={me.user.isSuperAdmin && !me.company ? '/admin' : '/dashboard'}>Open app <ArrowRight className="h-4 w-4" /></Link> : (
             <>
@@ -89,7 +88,7 @@ export function Home() {
           <Link className="btn primary !min-h-[50px] !rounded-2xl !px-6 !text-[15px]" to="/register">Start 14-day free trial <ArrowRight className="h-4 w-4" /></Link>
           <Link className="btn !min-h-[50px] !rounded-2xl !px-6 !text-[15px]" to="/pricing">See pricing</Link>
         </div>
-        <div className="mt-5 text-[13px] text-muted">No card required · Set up in under five minutes · Looking for a job? <Link to="/portal">Visit IntervueX Careers</Link></div>
+        <div className="mt-5 text-[13px] text-muted">No card required · Set up in under five minutes</div>
         <HeroPreview />
       </section>
 

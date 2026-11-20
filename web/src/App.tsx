@@ -20,8 +20,8 @@ import { CameraCompanion } from './pages/Camera';
 import { Playback } from './pages/Playback';
 import { Admin } from './pages/Admin';
 import { ReferHome, MyReferrals, ReferralsManage } from './pages/Referrals';
-import { CandProvider, PortalLayout, RequireCand, PortalLogin, PortalRegister, PortalVerify, PortalForgot, PortalReset } from './portal/Shell';
-import { PortalHome, JobSearch, PortalJobDetail, SavedJobs } from './portal/Jobs';
+import { CandProvider, PortalLayout, RequireCand, PortalLogin, PortalRegister, PortalAccept, PortalVerify, PortalForgot, PortalReset } from './portal/Shell';
+import { JobSearch, PortalJobDetail, SavedJobs } from './portal/Jobs';
 import { CandDashboard, CandApplications, CandInterviews, CandJoin, CandProfile } from './portal/Account';
 import { Outlet } from 'react-router-dom';
 
@@ -65,14 +65,15 @@ export function App() {
         <Route element={<Cand />}>
           <Route path="/portal/login" element={<PortalLogin />} />
           <Route path="/portal/register" element={<PortalRegister />} />
+          <Route path="/portal/accept" element={<PortalAccept />} />
           <Route path="/portal/verify" element={<PortalVerify />} />
           <Route path="/portal/forgot-password" element={<PortalForgot />} />
           <Route path="/portal/reset-password" element={<PortalReset />} />
           <Route path="/portal/interviews/:id/join" element={<RequireCand><CandJoin /></RequireCand>} />
           <Route element={<PortalLayout />}>
-            <Route path="/portal" element={<PortalHome />} />
-            <Route path="/portal/jobs" element={<JobSearch />} />
-            <Route path="/portal/jobs/:id" element={<PortalJobDetail />} />
+            <Route path="/portal" element={<Navigate to="/portal/dashboard" replace />} />
+            <Route path="/portal/jobs" element={<RequireCand><JobSearch /></RequireCand>} />
+            <Route path="/portal/jobs/:id" element={<RequireCand><PortalJobDetail /></RequireCand>} />
             <Route path="/portal/dashboard" element={<RequireCand><CandDashboard /></RequireCand>} />
             <Route path="/portal/applications" element={<RequireCand><CandApplications /></RequireCand>} />
             <Route path="/portal/interviews" element={<RequireCand><CandInterviews /></RequireCand>} />

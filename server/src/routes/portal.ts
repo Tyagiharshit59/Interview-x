@@ -1,5 +1,8 @@
 /**
- * Candidate portal: job seekers' own accounts, completely separate from company staff accounts.
+ * Candidate portal: candidates' own accounts, completely separate from company staff accounts.
+ *
+ * Invite-only: there is no public sign-up. When HR adds a candidate in the company portal they can send a
+ * "complete your profile" invitation; the candidate sets a password from that single-use link (which also verifies the email).
  *
  * Security model
  * - Separate identity collection (candidate_accounts) and a separate cookie signed with a separate key, so a candidate
@@ -51,7 +54,6 @@ declare module 'express-serve-static-core' { interface Request { cand?: any } }
 const requireCandidate = (req: Request, _res: Response, next: NextFunction) => {
   accountFrom(req).then(a => { if (!a) return next(new HttpError(401, 'Please sign in to your candidate account', 'unauthenticated')); req.cand = a; next(); }).catch(next);
 };
-const optionalCandidate = (req: Request, _res: Response, next: NextFunction) => { accountFrom(req).then(a => { req.cand = a; next(); }).catch(next); };
 const requireVerified = (req: Request) => { if (!req.cand.email_verified) throw new HttpError(403, 'Please verify your email address first. We sent you a link when you signed up.', 'email_unverified'); };
 
 const profileOut = (a: any) => ({
@@ -86,16 +88,8 @@ async function sendVerify(acc: { id: string; email: string; name: string }) {
 /* ---------------- auth ---------------- */
 portalRouter.use(limiter);
 
-portalRouter.post('/auth/register', wrap(async (req, res) => {
-  const b = parse(z.object({ name: z.string().trim().min(2).max(100), email: z.string().trim().toLowerCase().email(), password }), req.body);
-  let id: string;
-  try {
-    id = await db.candidate_accounts.insert({ email: b.email, password_hash: bcrypt.hashSync(b.password, 12), name: b.name, skills: '[]', email_verified: 0, session_version: 0, status: 'active', failed_logins: 0, locked_until: null, created_at: now() });
-  } catch (e) { if (isDuplicateKey(e)) throw new HttpError(409, 'An account with this email already exists. Try signing in.', 'email_taken'); throw e; }
-  const acc = await db.candidate_accounts.get({ id });
-  const link = await sendVerify(acc);
-  issueCandSession(res, acc);
-  res.status(201).json({ ...profileOut(acc), ...(config.isProd ? {} : { devVerifyUrl: link }) });
+portalRouter.post('/auth/register', wrap(async (_req, _res) => {
+  throw new HttpError(403, 'Candidate profiles are created by invitation. Ask the company you applied to for a profile invitation.', 'invite_only');
 }));
 
 portalRouter.post('/auth/login', wrap(async (req, res) => {
@@ -147,6 +141,59 @@ portalRouter.post('/auth/reset-password', wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 
+/* ---------------- invitations (sent by HR) ---------------- */
+async function loadInvite(raw: string) {
+  const t = await db.user_tokens.get({ token_hash: sha256(raw), purpose: 'cand_invite' });
+  if (!t || t.used_at || isExpired(t.expires_at)) throw bad('This invitation link is invalid or has expired. Ask the company to send a new one.', 'bad_token');
+  return { t, p: j<any>(t.payload, {}) };
+}
+portalRouter.get('/invite/:token', wrap(async (req, res) => {
+  const { p } = await loadInvite(String(req.params.token));
+  const co = await db.companies.get({ id: p.companyId });
+  const exists = await db.candidate_accounts.exists({ email: p.email });
+  res.json({ name: p.name, email: p.email, company: co?.name ?? null, hasAccount: exists });
+}));
+portalRouter.post('/invite/:token', wrap(async (req, res) => {
+  const b = parse(z.object({ password, name: z.string().trim().min(2).max(100).optional() }), req.body);
+  const { t, p } = await loadInvite(String(req.params.token));
+  if (await db.candidate_accounts.exists({ email: p.email })) throw new HttpError(409, 'You already have a profile. Please sign in.', 'already_active');
+  const cand = p.candidateId ? await db.candidates.get({ id: p.candidateId, company_id: p.companyId }) : null;
+  let id = '';
+  try {
+    // The link was emailed to this address, so the email counts as verified. Prefill what HR already entered.
+    id = await db.candidate_accounts.insert({
+      email: p.email, password_hash: bcrypt.hashSync(b.password, 12), name: b.name || cand?.name || p.name, phone: cand?.phone ?? null, headline: cand?.current_title ?? null,
+      location: cand?.location ?? null, experience_years: cand?.experience_years ?? null, skills: cand?.skills ?? '[]', email_verified: 1, verified_at: now(), invited_by_company: p.companyId,
+      session_version: 0, status: 'active', failed_logins: 0, locked_until: null, created_at: now(),
+    });
+  } catch (e) { if (isDuplicateKey(e)) throw new HttpError(409, 'You already have a profile. Please sign in.', 'already_active'); throw e; }
+  await db.user_tokens.set({ token_hash: t.token_hash }, { used_at: now() });
+  if (cand) await db.candidates.set({ id: cand.id, company_id: p.companyId }, { account_id: id, portal_joined_at: now() });
+  const acc = await db.candidate_accounts.get({ id });
+  issueCandSession(res, acc);
+  res.status(201).json(profileOut(acc));
+}));
+
+/**
+ * Sends a candidate the "complete your profile" invitation (or, if they already have a profile, a heads-up to sign in).
+ * Used when HR adds a candidate and from the candidate's page.
+ */
+export async function sendPortalInvite(cid: string, cand: any, inviter: { name: string }) {
+  const email = String(cand.email).toLowerCase();
+  const co = await db.companies.get({ id: cid });
+  await db.candidates.set({ id: cand.id, company_id: cid }, { portal_invited_at: now() });
+  if (await db.candidate_accounts.exists({ email })) {
+    void sendMail(cid, email, `${co.name} added you on IntervueX Careers`, `Hi ${cand.name},\n\n${co.name} added you as a candidate. Sign in to see your applications and interview invitations: ${config.appUrl}/portal/login`);
+    return { existingAccount: true };
+  }
+  const raw = newToken();
+  await db.user_tokens.insert({ token_hash: sha256(raw), user_id: `invite:${email}`, purpose: 'cand_invite', expires_at: addMinutes(60 * 24 * 14), used_at: null, payload: JSON.stringify({ email, name: cand.name, companyId: cid, candidateId: cand.id }) });
+  const link = `${config.appUrl}/portal/accept?token=${raw}`;
+  void sendMail(cid, email, `${co.name} invites you to complete your profile`,
+    `Hi ${cand.name},\n\n${inviter.name} at ${co.name} added you as a candidate. Complete your profile on IntervueX Careers to upload your CV, track your application and join interviews:\n${link}\n\nThis link is personal, works once and expires in 14 days.`);
+  return { existingAccount: false, ...(config.isProd ? {} : { devInviteUrl: link }) };
+}
+
 /* ---------------- profile ---------------- */
 portalRouter.patch('/profile', requireCandidate, wrap(async (req, res) => {
   const b = parse(z.object({
@@ -194,7 +241,7 @@ async function boardFilter(extra: any = {}) {
   return { status: 'published', is_template: { $ne: 1 }, public_listing: { $ne: 0 }, company_id: { $in: activeCos }, ...extra };
 }
 const jobCard = (jb: any, co: any, match?: number | null) => ({
-  id: jb.id, title: jb.title, company: co?.name ?? 'Company', company_industry: co?.industry ?? null, department: jb.department ?? null, location: jb.location ?? null,
+  id: jb.id, job_code: jb.job_code ?? null, title: jb.title, company: co?.name ?? 'Company', company_industry: co?.industry ?? null, department: jb.department ?? null, location: jb.location ?? null,
   employment_type: jb.employment_type ?? null, exp_min: jb.exp_min ?? null, exp_max: jb.exp_max ?? null, required_skills: j<string[]>(jb.required_skills, []),
   posted_at: jb.updated_at || jb.created_at, match: match ?? null,
 });
@@ -210,11 +257,11 @@ async function myApplications(acc: any) {
   return db.applications.list({ candidate_id: { $in: cands.map(c => c.id) } }, { sort: { created_at: -1 } });
 }
 
-portalRouter.get('/jobs', optionalCandidate, wrap(async (req, res) => {
+portalRouter.get('/jobs', requireCandidate, wrap(async (req, res) => {
   const { q, location, type, skill, sort } = req.query as Record<string, string | undefined>;
   const page = Math.max(1, Number(req.query.page) || 1); const size = 12;
   const and: any[] = [];
-  if (q) { const rx = { $regex: escapeRegex(q.slice(0, 80)), $options: 'i' }; and.push({ $or: [{ title: rx }, { department: rx }, { description: rx }, { required_skills: rx }] }); }
+  if (q) { const rx = { $regex: escapeRegex(q.trim().slice(0, 80)), $options: 'i' }; and.push({ $or: [{ job_code: rx }, { title: rx }, { department: rx }, { description: rx }, { required_skills: rx }] }); }
   if (location) and.push({ location: { $regex: escapeRegex(location.slice(0, 60)), $options: 'i' } });
   if (type) and.push({ employment_type: { $regex: `^${escapeRegex(type.slice(0, 40))}$`, $options: 'i' } });
   if (skill) and.push({ required_skills: { $regex: escapeRegex(skill.slice(0, 40)), $options: 'i' } });
@@ -232,7 +279,7 @@ portalRouter.get('/jobs', optionalCandidate, wrap(async (req, res) => {
   res.json({ items, total, page, pages: Math.max(1, Math.ceil(total / size)), facets: { locations, types } });
 }));
 
-portalRouter.get('/jobs/:id', optionalCandidate, wrap(async (req, res) => {
+portalRouter.get('/jobs/:id', requireCandidate, wrap(async (req, res) => {
   const jb = await db.jobs.get(await boardFilter({ id: String(req.params.id) }));
   if (!jb) throw notFound('This job is no longer open');
   const co = await db.companies.get({ id: jb.company_id });
@@ -422,6 +469,19 @@ portalRouter.get('/overview', requireCandidate, wrap(async (req, res) => {
 
 /* ======================= staff side: share an update with the candidate ======================= */
 export const candidateUpdatesRouter = Router();
+candidateUpdatesRouter.get('/candidates/:id/portal', requirePerm('candidates.read'), wrap(async (req, res) => {
+  const c = await db.candidates.get({ id: req.params.id, company_id: tenant(req) });
+  if (!c) throw notFound('Candidate not found');
+  const acc = await db.candidate_accounts.get({ email: String(c.email).toLowerCase() });
+  res.json({ invitedAt: c.portal_invited_at ?? null, joined: !!acc, joinedAt: acc?.created_at ?? null });
+}));
+candidateUpdatesRouter.post('/candidates/:id/portal-invite', requirePerm('candidates.write'), wrap(async (req, res) => {
+  const c = await db.candidates.get({ id: req.params.id, company_id: tenant(req) });
+  if (!c) throw notFound('Candidate not found');
+  const r = await sendPortalInvite(tenant(req), c, req.auth!);
+  await audit(tenant(req), req.auth!, 'candidate.portal_invited', c.id, req);
+  res.json({ ok: true, ...r });
+}));
 candidateUpdatesRouter.get('/applications/:id/updates', requirePerm('candidates.read'), wrap(async (req, res) => {
   const a = await db.applications.get({ id: req.params.id, company_id: tenant(req) });
   if (!a) throw notFound('Application not found');

@@ -17,7 +17,7 @@ export function ReferHome() {
   if (error) return <ErrorBox error={error} />;
   if (!data) return <Loading />;
   const p = data.program;
-  const jobs = data.items.filter((j: any) => !q || `${j.title} ${j.department ?? ''} ${j.location ?? ''} ${j.required_skills.join(' ')}`.toLowerCase().includes(q.toLowerCase()));
+  const jobs = data.items.filter((j: any) => !q || `${j.job_code ?? ''} ${j.title} ${j.department ?? ''} ${j.location ?? ''} ${j.required_skills.join(' ')}`.toLowerCase().includes(q.toLowerCase()));
   return (
     <div className="flex flex-col gap-6">
       <div className="relative overflow-hidden rounded-3xl bg-night-gradient p-7 text-white shadow-lift sm:p-9">
@@ -36,14 +36,14 @@ export function ReferHome() {
         <>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <h2 className="mb-0 text-xl">Open roles <span className="text-[15px] font-medium text-muted">({data.items.length})</span></h2>
-            <div className="relative sm:w-80"><Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" /><input className="!pl-10" placeholder="Search roles or skills" value={q} onChange={e => setQ(e.target.value)} aria-label="Search roles" /></div>
+            <div className="relative sm:w-80"><Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" /><input className="!pl-10" placeholder="Search job ID, role or skill" value={q} onChange={e => setQ(e.target.value)} aria-label="Search roles" /></div>
           </div>
           {jobs.length ? (
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
               {jobs.map((j: any) => (
                 <article key={j.id} className="flex flex-col gap-4 rounded-2xl border border-line bg-surface p-5 shadow-soft transition hover:-translate-y-0.5 hover:shadow-lift">
                   <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0"><div className="text-[16px] font-bold">{j.title}</div><div className="mt-0.5 text-[13px] text-muted">{j.department || 'Team'}</div></div>
+                    <div className="min-w-0">{j.job_code && <div className="font-mono text-[11.5px] font-semibold tracking-wide text-gold-600 dark:text-gold-300">{j.job_code}</div>}<div className="text-[16px] font-bold">{j.title}</div><div className="mt-0.5 text-[13px] text-muted">{j.department || 'Team'}</div></div>
                     <span className="flex-none rounded-xl bg-gold-gradient px-2.5 py-1 text-[13px] font-extrabold text-midnight-950 shadow-sm">{inr(j.bonus)}</span>
                   </div>
                   <div className="flex flex-wrap gap-x-4 gap-y-1 text-[13px] text-muted">{j.location && <span className="flex items-center gap-1"><MapPin className="h-3.5 w-3.5" />{j.location}</span>}{j.employment_type && <span className="flex items-center gap-1 capitalize"><Briefcase className="h-3.5 w-3.5" />{j.employment_type}</span>}{(j.exp_min != null) && <span>{j.exp_min}{j.exp_max != null ? `–${j.exp_max}` : '+'} yrs</span>}</div>
@@ -127,7 +127,7 @@ export function MyReferrals() {
         <article key={r.id} className="card flex flex-col gap-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="flex items-center gap-3"><span className="grid h-11 w-11 place-items-center rounded-xl bg-gradient-to-br from-brand-500/15 to-gold-400/25 text-[14px] font-bold text-brand-700 dark:text-brand-200">{r.candidate_name.split(' ').map((x: string) => x[0]).slice(0, 2).join('').toUpperCase()}</span>
-              <div><div className="text-[16px] font-bold">{r.candidate_name}</div><div className="text-[13px] text-muted">{r.job_title} · {REL[r.relationship] || r.relationship} · referred {fmtDate(r.created_at, { dateStyle: 'medium' })}</div></div></div>
+              <div><div className="text-[16px] font-bold">{r.candidate_name}</div><div className="text-[13px] text-muted">{r.job_code ? `${r.job_code} · ` : ''}{r.job_title} · {REL[r.relationship] || r.relationship} · referred {fmtDate(r.created_at, { dateStyle: 'medium' })}</div></div></div>
             <div className="flex flex-col items-end gap-1"><Badge kind={BONUS_TONE[r.bonus.status]}>{r.bonus.label}</Badge><span className="text-[13px] font-bold">{inr(r.bonus.amount)}</span></div>
           </div>
           {r.status.key === 'withdrawn' ? <Badge>Withdrawn</Badge> : (
@@ -181,7 +181,7 @@ function ReferralsTable() {
             {rows.map((r: any) => (
               <tr key={r.id}>
                 <td><Link to={`/candidates/${r.candidate_id}`} className="font-semibold">{r.candidate_name}</Link><div className="text-[12.5px] text-muted">{REL[r.relationship]} · {fmtDate(r.created_at, { dateStyle: 'medium' })}</div>{r.note && <div className="mt-1 line-clamp-2 max-w-xs text-[12.5px] italic text-muted">“{r.note}”</div>}</td>
-                <td>{r.job_title}</td>
+                <td>{r.job_code && <div className="font-mono text-[12px] font-semibold text-gold-600 dark:text-gold-300">{r.job_code}</div>}{r.job_title}</td>
                 <td>{r.referrer_name}</td>
                 <td><Badge kind="info">{r.stage || '—'}</Badge></td>
                 <td><div className="font-bold">{inr(r.bonus.amount)}</div><Badge kind={BONUS_TONE[r.bonus.status]}>{r.bonus.label}</Badge>{r.bonus.status === 'pending_waiting' && r.bonus.eligibleOn && <div className="text-[12px] text-muted">from {fmtDate(r.bonus.eligibleOn, { dateStyle: 'medium' })}</div>}</td>

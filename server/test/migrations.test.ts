@@ -119,3 +119,20 @@ test('tenant-scoped records stay separate per company', async () => {
   assert.equal((await db.company_feature_overrides.get({ company_id: b, feature_key: 'ai.questions' })).enabled, 0);
   assert.equal(await db.company_feature_overrides.count({ company_id: a }), 1);
 });
+
+test('migration 6 gives existing jobs a company-prefixed ID in creation order and never touches templates', async () => {
+  const cid = await mkCompany('Infoaxon Technologies');
+  const t = (m: number) => new Date(Date.UTC(2026, 0, 1, 0, m)).toISOString();
+  const second = await db.jobs.insert({ company_id: cid, title: 'Second', status: 'draft', is_template: 0, created_at: t(2), updated_at: t(2) });
+  const first = await db.jobs.insert({ company_id: cid, title: 'First', status: 'published', is_template: 0, created_at: t(1), updated_at: t(1) });
+  const tpl = await db.jobs.insert({ company_id: cid, title: 'Template', status: 'draft', is_template: 1, created_at: t(0), updated_at: t(0) });
+  await MIGRATIONS.find((m: any) => m.version === 6).up();
+  assert.equal((await db.jobs.get({ id: first })).job_code, 'IT-0001');
+  assert.equal((await db.jobs.get({ id: second })).job_code, 'IT-0002');
+  assert.equal((await db.jobs.get({ id: tpl })).job_code, undefined);
+  assert.equal((await db.companies.get({ id: cid })).job_seq, 2);
+  await MIGRATIONS.find((m: any) => m.version === 6).up();
+  assert.equal((await db.jobs.get({ id: second })).job_code, 'IT-0002', 're-running is a no-op');
+  const { nextJobCode } = await import('../src/jobcodes.js');
+  assert.equal(await nextJobCode(cid), 'IT-0003');
+});

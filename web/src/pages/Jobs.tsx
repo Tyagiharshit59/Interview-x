@@ -12,14 +12,14 @@ export function JobsList() {
   return (
     <div className="stack">
       <PageHeader eyebrow="Hiring" title={tpl ? 'JD templates' : 'Jobs'} description={tpl ? 'Reusable job descriptions for roles you hire often.' : 'Open roles, their pipelines and applicants.'} actions={can('jobs.write') && <Link className="btn primary" to="/jobs/new">New job</Link>} />
-      <div className="row"><input style={{ maxWidth: 280 }} placeholder="Search title or department" value={q} onChange={e => setQ(e.target.value)} aria-label="Search jobs" />
+      <div className="row"><input style={{ maxWidth: 280 }} placeholder="Search job ID, title or department" value={q} onChange={e => setQ(e.target.value)} aria-label="Search jobs" />
         <select style={{ maxWidth: 180 }} value={status} onChange={e => setStatus(e.target.value)} aria-label="Status"><option value="">All statuses</option><option>draft</option><option>published</option><option>archived</option></select>
         <label className="check"><input type="checkbox" checked={tpl} onChange={e => setTpl(e.target.checked)} />Templates only</label></div>
       <ErrorBox error={error} />
       <Card>{loading ? <Loading /> : !data?.items.length ? <Empty title="No jobs yet">{can('jobs.write') && <p><Link to="/jobs/new">Create your first job</Link> or upload a job description.</p>}</Empty> : (
-        <div className="table-wrap"><table><thead><tr><th>Title</th><th>Department</th><th>Location</th><th>Applicants</th><th>Status</th><th /></tr></thead><tbody>
+        <div className="table-wrap"><table><thead><tr><th>Job ID</th><th>Title</th><th>Department</th><th>Location</th><th>Applicants</th><th>Status</th><th /></tr></thead><tbody>
           {data.items.map((j: any) => (
-            <tr key={j.id}><td><Link to={`/jobs/${j.id}`}><b>{j.title}</b></Link></td><td>{j.department || '—'}</td><td>{j.location || '—'}</td><td>{j.applicants}</td><td>{statusBadge(j.status)}</td>
+            <tr key={j.id}><td className="whitespace-nowrap font-mono text-[13px] font-semibold text-gold-600 dark:text-gold-300">{j.job_code || '—'}</td><td><Link to={`/jobs/${j.id}`}><b>{j.title}</b></Link></td><td>{j.department || '—'}</td><td>{j.location || '—'}</td><td>{j.applicants}</td><td>{statusBadge(j.status)}</td>
               <td className="right">{can('jobs.write') && <div className="row" style={{ justifyContent: 'flex-end' }}>
                 <Button size="sm" onClick={async () => { const r = await post(`/jobs/${j.id}/duplicate`); toast('Job duplicated'); nav(`/jobs/${r.id}/edit`); }}>Duplicate</Button>
                 {j.status !== 'archived' ? <Button size="sm" onClick={async () => { if (await confirm(`Archive "${j.title}"?`, false)) { await post(`/jobs/${j.id}/status`, { status: 'archived' }); void reload(); } }}>Archive</Button>
@@ -117,7 +117,7 @@ export function JobDetail() {
   const move = async (appId: string, stage: string) => { try { await patch(`/applications/${appId}/stage`, { stage }); void reload(); } catch (e: any) { toast(e.message, 'error'); } };
   return (
     <div className="stack">
-      <div className="row between"><div><h1 style={{ marginBottom: 2 }}>{job.title}</h1><div className="muted">{[job.department, job.location, job.employment_type].filter(Boolean).join(' · ')} {statusBadge(job.status)}</div></div>
+      <div className="row between"><div>{job.job_code && <div className="mb-1 font-mono text-[12.5px] font-bold tracking-wide text-gold-600 dark:text-gold-300">JOB ID · {job.job_code}</div>}<h1 style={{ marginBottom: 2 }}>{job.title}</h1><div className="muted">{[job.department, job.location, job.employment_type].filter(Boolean).join(' · ')} {statusBadge(job.status)}</div></div>
         <div className="row">{can('jobs.write') && <><Link className="btn" to={`/jobs/${id}/edit`}>Edit</Link>{job.status !== 'published' && <Button variant="primary" onClick={async () => { await post(`/jobs/${id}/status`, { status: 'published' }); location.reload(); }}>Publish</Button>}</>}
           {can('ai.use') && <Button busy={aiBusy} onClick={async () => { setAiBusy(true); try { setAi(await post('/ai/questions', { jobId: id, count: 8 })); } catch (e: any) { toast(e.message, 'error'); } finally { setAiBusy(false); } }}>✨ Suggest interview questions</Button>}</div></div>
       <div className="row">{job.required_skills.map((s: string) => <span className="chip" key={s}>{s}</span>)}{job.preferred_skills.map((s: string) => <span className="chip gray" key={s}>{s}</span>)}</div>
