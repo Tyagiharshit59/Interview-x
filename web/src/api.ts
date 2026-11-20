@@ -27,6 +27,12 @@ export const put = <T = any>(u: string, b?: unknown) => api<T>('PUT', u, b ?? {}
 export const patch = <T = any>(u: string, b?: unknown) => api<T>('PATCH', u, b ?? {});
 export const del = <T = any>(u: string) => api<T>('DELETE', u);
 
+/** POST a multipart form (fields + optional files). */
+export async function postForm<T = any>(url: string, fd: FormData): Promise<T> {
+  let r: Response;
+  try { r = await fetch('/api' + url, { method: 'POST', body: fd, credentials: 'same-origin' }); } catch { throw new ApiError(0, 'Cannot reach the server. Check your connection and try again.', 'network'); }
+  return handle(r);
+}
 export async function upload<T = any>(url: string, file: File): Promise<T> {
   const fd = new FormData(); fd.append('file', file);
   let r: Response;

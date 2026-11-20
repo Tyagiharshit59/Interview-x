@@ -104,6 +104,13 @@ export const MIGRATIONS: Migration[] = [
       await idx('jobs', { status: 1, is_template: 1, updated_at: -1 });
     },
   },
+  {
+    version: 5, name: 'employee referral programme',
+    up: async () => {
+      await idx('referrals', { company_id: 1, referrer_id: 1, created_at: -1 });
+      await idx('referrals', { company_id: 1, application_id: 1 });
+    },
+  },
 ];
 
 /** Upserts the feature and limit vocabularies. Safe to run on every start. */

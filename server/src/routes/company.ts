@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { db, now, j, tx, isDuplicateKey } from '../db.js';
-import { requirePerm, tenant, ROLES } from '../auth.js';
+import { requirePerm, tenant, ROLES, can } from '../auth.js';
 import { wrap, parse, HttpError, newToken, sha256, addDays, bad } from '../util.js';
 import { createAccountToken } from './auth.js';
 import { audit, sendMail, getEntitlements, usageSummary, notify } from '../services.js';
@@ -70,7 +70,8 @@ companyRouter.post('/team/invites', requirePerm('members.manage'), wrap(async (r
 /** Seat check shared by invites and direct account creation. */
 async function assertSeat(cid: string) {
   const e = await getEntitlements(cid);
-  const active = await db.company_members.count({ company_id: cid, status: 'active' });
+  // referral-only employees do not use a hiring-team seat
+  const active = await db.company_members.count({ company_id: cid, status: 'active', role: { $ne: 'employee' } });
   const pending = await db.member_invites.count({ company_id: cid, accepted_at: null, expires_at: { $gt: now() } });
   if (e.members !== -1 && active + pending >= e.members) throw new HttpError(402, `Your plan includes ${e.members} team accounts. Upgrade to add more.`, 'limit_reached');
 }
@@ -89,14 +90,23 @@ async function sendActivation(cid: string, user: { id: string; email: string; na
  * No password is set or emailed: the person receives a single-use, 7-day activation link and chooses their own password.
  * If the email already has an IntervueX account, they are simply added to this company.
  */
-companyRouter.post('/team/members', requirePerm('members.manage'), wrap(async (req, res) => {
+/** Admins manage everyone; HR may create and manage referral-only employee accounts. */
+function assertCanManage(req: any, role: string) {
+  const r = req.auth!.role ?? undefined;
+  if (can(r, 'members.manage')) return;
+  if (role === 'employee' && can(r, 'employees.manage')) return;
+  throw new HttpError(403, role === 'employee' ? 'You do not have permission to manage employees' : 'Only owners and admins can manage team members', 'forbidden');
+}
+
+companyRouter.post('/team/members', wrap(async (req, res) => {
   const cid = tenant(req);
   const b = parse(z.object({
     name: z.string().trim().min(2, 'Enter the full name').max(100), email: z.string().trim().toLowerCase().email(),
-    role: z.enum(['admin', 'hr', 'recruiter', 'interviewer', 'hiring_manager']),
+    role: z.enum(['admin', 'hr', 'recruiter', 'interviewer', 'hiring_manager', 'employee']),
     designation: z.string().trim().max(80).optional().nullable(), phone: z.string().trim().max(30).optional().nullable(),
   }), req.body);
-  await assertSeat(cid);
+  assertCanManage(req, b.role);
+  if (b.role !== 'employee') await assertSeat(cid);
   const existing = await db.users.get({ email: b.email });
   if (existing && await db.company_members.exists({ company_id: cid, user_id: existing.id })) throw new HttpError(409, 'That person is already on your team', 'already_member');
   let devActivateUrl: string | undefined;
@@ -113,16 +123,17 @@ companyRouter.post('/team/members', requirePerm('members.manage'), wrap(async (r
   if (!existing || !existing.password_hash) devActivateUrl = await sendActivation(cid, { id: userId!, email: b.email, name: existing?.name || b.name }, b.role, req.auth!.name);
   else {
     void sendMail(cid, b.email, `You've been added to ${co.name} on IntervueX`, `${req.auth!.name} added you to ${co.name} as ${b.role.replace('_', ' ')}.\nSign in with your existing account: ${config.appUrl}/login`);
-    await notify(cid, userId!, 'team', `You were added to ${co.name}`, `Role: ${b.role.replace('_', ' ')}`, '/dashboard');
+    await notify(cid, userId!, 'team', `You were added to ${co.name}`, `Role: ${b.role.replace('_', ' ')}`, b.role === 'employee' ? '/referrals' : '/dashboard');
   }
   await audit(cid, req.auth!, 'member.created', userId, req, { email: b.email, role: b.role, newAccount: !existing });
   res.status(201).json({ ok: true, userId, newAccount: !existing, ...(config.isProd ? {} : { devActivateUrl }) });
 }));
 
-companyRouter.post('/team/members/:id/resend-activation', requirePerm('members.manage'), wrap(async (req, res) => {
+companyRouter.post('/team/members/:id/resend-activation', wrap(async (req, res) => {
   const cid = tenant(req);
   const m = await db.company_members.get({ id: req.params.id, company_id: cid });
   if (!m) throw new HttpError(404, 'Member not found');
+  assertCanManage(req, m.role);
   const u = await db.users.get({ id: m.user_id });
   if (!u || u.password_hash) throw bad('This account is already active');
   await db.user_tokens.setMany({ user_id: u.id, purpose: 'activate_account', used_at: null }, { used_at: now() }); // old links stop working
@@ -136,10 +147,12 @@ companyRouter.delete('/team/invites/:id', requirePerm('members.manage'), wrap(as
   res.json({ ok: true });
 }));
 
-companyRouter.patch('/team/members/:id', requirePerm('members.manage'), wrap(async (req, res) => {
+companyRouter.patch('/team/members/:id', wrap(async (req, res) => {
   const b = parse(z.object({ role: z.enum(ROLES as [string, ...string[]]).optional(), status: z.enum(['active', 'disabled']).optional(), designation: z.string().trim().max(80).nullable().optional() }), req.body);
   const m = await db.company_members.get({ id: req.params.id, company_id: tenant(req) });
   if (!m) throw new HttpError(404, 'Member not found');
+  assertCanManage(req, m.role);
+  if (b.role && b.role !== m.role) assertCanManage(req, b.role === 'employee' ? 'not-employee' : b.role); // changing roles is admin-only
   if (m.role === 'owner' && req.auth!.role !== 'owner') throw new HttpError(403, 'Only an owner can change an owner');
   if (m.user_id === req.auth!.userId && (b.status === 'disabled' || (b.role && b.role !== m.role))) throw bad('You cannot change your own role or disable yourself');
   if (b.role === 'owner' && req.auth!.role !== 'owner') throw new HttpError(403, 'Only an owner can assign owner');

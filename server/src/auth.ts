@@ -5,8 +5,9 @@ import { config } from './config.js';
 import { HttpError, forbidden } from './util.js';
 import { audit } from './services.js';
 
-export type Role = 'owner' | 'admin' | 'hr' | 'recruiter' | 'interviewer' | 'hiring_manager';
-export const ROLES: Role[] = ['owner', 'admin', 'hr', 'recruiter', 'interviewer', 'hiring_manager'];
+export type Role = 'owner' | 'admin' | 'hr' | 'recruiter' | 'interviewer' | 'hiring_manager' | 'employee';
+export const ROLES: Role[] = ['owner', 'admin', 'hr', 'recruiter', 'interviewer', 'hiring_manager', 'employee'];
+/** Hiring-team roles. `employee` (referral portal only) is deliberately NOT included. */
 
 const ALL: Role[] = ['owner', 'admin', 'hr', 'recruiter', 'interviewer', 'hiring_manager'];
 export const PERMS = {
@@ -30,6 +31,9 @@ export const PERMS = {
   'reports.export': ['owner', 'admin', 'hr', 'hiring_manager'],
   'ai.use': ALL,
   'audit.view': ['owner', 'admin'],
+  'referrals.create': [...ALL, 'employee'],
+  'referrals.manage': ['owner', 'admin', 'hr'],
+  'employees.manage': ['owner', 'admin', 'hr'],
 } as const satisfies Record<string, readonly Role[]>;
 export type Perm = keyof typeof PERMS;
 export const can = (role: Role | undefined, perm: Perm) => !!role && (PERMS[perm] as readonly Role[]).includes(role);

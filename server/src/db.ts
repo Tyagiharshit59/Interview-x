@@ -137,7 +137,7 @@ export const COLLECTIONS = [
   'coding_submissions', 'coding_execution_logs', 'code_snapshots', 'whiteboard_sessions', 'evaluation_templates', 'interview_feedback', 'interview_transcripts',
   'ai_reports', 'notifications', 'notification_prefs', 'email_outbox', 'integrations', 'feature_flags', 'announcements', 'support_requests', 'audit_logs',
   'features', 'plan_features', 'company_feature_overrides', 'temporary_feature_grants', 'limit_definitions', 'plan_limits', 'company_limit_overrides', 'internal_staff', 'invitations', 'schema_migrations',
-  'candidate_accounts', 'saved_jobs', 'candidate_updates',
+  'candidate_accounts', 'saved_jobs', 'candidate_updates', 'referrals',
 ] as const;
 type Name = typeof COLLECTIONS[number];
 export const db = Object.fromEntries(COLLECTIONS.map(n => [n, new Coll(n)])) as { [K in Name]: Coll };

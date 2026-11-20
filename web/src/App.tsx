@@ -19,6 +19,7 @@ import { Join } from './pages/Join';
 import { CameraCompanion } from './pages/Camera';
 import { Playback } from './pages/Playback';
 import { Admin } from './pages/Admin';
+import { ReferHome, MyReferrals, ReferralsManage } from './pages/Referrals';
 import { CandProvider, PortalLayout, RequireCand, PortalLogin, PortalRegister, PortalVerify, PortalForgot, PortalReset } from './portal/Shell';
 import { PortalHome, JobSearch, PortalJobDetail, SavedJobs } from './portal/Jobs';
 import { CandDashboard, CandApplications, CandInterviews, CandJoin, CandProfile } from './portal/Account';
@@ -37,8 +38,10 @@ function Protected({ children }: { children: ReactNode }) {
 }
 const needCompany = (el: ReactNode) => <Protected><CompanyOnly>{el}</CompanyOnly></Protected>;
 function CompanyOnly({ children }: { children: ReactNode }) {
-  const { me } = useAuth();
+  const { me } = useAuth(); const loc = useLocation();
   if (me?.user.isSuperAdmin && !me.company) return <Navigate to="/admin" replace />;
+  // referral-only employees: everything outside the referral portal sends them to it
+  if (me?.role === 'employee' && !loc.pathname.startsWith('/referrals') || (me?.role === 'employee' && loc.pathname === '/referrals/manage')) return <Navigate to="/referrals" replace />;
   if (!me?.company) return <div className="auth-wrap"><div className="card auth-card"><h2>No company</h2><p>Your account is not part of an active company.</p></div></div>;
   return <>{children}</>;
 }
@@ -97,6 +100,9 @@ export function App() {
           <Route path="/questions" element={<CompanyOnly><Questions /></CompanyOnly>} />
           <Route path="/analytics" element={<CompanyOnly><Analytics /></CompanyOnly>} />
           <Route path="/team" element={<CompanyOnly><Team /></CompanyOnly>} />
+          <Route path="/referrals" element={<CompanyOnly><ReferHome /></CompanyOnly>} />
+          <Route path="/referrals/mine" element={<CompanyOnly><MyReferrals /></CompanyOnly>} />
+          <Route path="/referrals/manage" element={<CompanyOnly><ReferralsManage /></CompanyOnly>} />
           <Route path="/settings" element={<CompanyOnly><Settings /></CompanyOnly>} />
           <Route path="/billing" element={<CompanyOnly><Billing /></CompanyOnly>} />
           <Route path="/invoices/:id" element={<CompanyOnly><InvoiceView /></CompanyOnly>} />

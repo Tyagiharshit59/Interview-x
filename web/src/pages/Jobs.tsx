@@ -31,7 +31,7 @@ export function JobsList() {
   );
 }
 
-const blank = { title: '', department: '', location: '', employment_type: 'full-time', exp_min: '' as any, exp_max: '' as any, description: '', responsibilities: '', qualifications: '', required_skills: [] as string[], preferred_skills: [] as string[], screening_questions: [] as string[], interviewer_ids: [] as string[], is_template: false, public_listing: true };
+const blank = { title: '', department: '', location: '', employment_type: 'full-time', exp_min: '' as any, exp_max: '' as any, description: '', responsibilities: '', qualifications: '', required_skills: [] as string[], preferred_skills: [] as string[], screening_questions: [] as string[], interviewer_ids: [] as string[], is_template: false, public_listing: true, referrals_enabled: true, referral_bonus: '' as any };
 
 export function JobEditor() {
   const { id } = useParams(); const nav = useNavigate(); const toast = useToast(); const fileRef = useRef<HTMLInputElement>(null);
@@ -43,7 +43,7 @@ export function JobEditor() {
   const fe = (p: string) => err?.details?.find?.((d: any) => d.path === p)?.message;
   const save = async (publish = false) => {
     setBusy(true); setErr(null);
-    const body = { ...f, exp_min: f.exp_min === '' ? null : Number(f.exp_min), exp_max: f.exp_max === '' ? null : Number(f.exp_max) };
+    const body = { ...f, exp_min: f.exp_min === '' ? null : Number(f.exp_min), exp_max: f.exp_max === '' ? null : Number(f.exp_max), referral_bonus: f.referral_bonus === '' || f.referral_bonus == null ? null : Number(f.referral_bonus) };
     delete body.id; delete body.company_id; delete body.status; delete body.created_at; delete body.updated_at; delete body.created_by; delete body.applicants;
     try {
       const r = id ? await patch(`/jobs/${id}`, body) : await post('/jobs', body);
@@ -97,6 +97,10 @@ export function JobEditor() {
           {team?.members.filter((m: any) => m.status === 'active').map((m: any) => <option key={m.user_id} value={m.user_id}>{m.name} ({m.role.replace('_', ' ')})</option>)}</select></Field>
         <label className="check" style={{ marginTop: 10 }}><input type="checkbox" checked={f.is_template} onChange={e => set('is_template', e.target.checked)} />Save as a reusable template</label>
         {!f.is_template && <label className="check" style={{ marginTop: 8 }}><input type="checkbox" checked={f.public_listing !== false} onChange={e => set('public_listing', e.target.checked)} /><span>List on the public careers portal when published <span className="muted">(job seekers can find and apply; untick for confidential roles)</span></span></label>}
+        {!f.is_template && <div className="mt-3 grid grid-cols-1 gap-3 rounded-xl border border-line p-3.5 sm:grid-cols-2 sm:items-end">
+          <label className="check"><input type="checkbox" checked={f.referrals_enabled !== false} onChange={e => set('referrals_enabled', e.target.checked)} /><span>Open for employee referrals</span></label>
+          <Field label="Referral bonus (₹)" hint="Leave empty to use the programme default"><input type="number" min={0} value={f.referral_bonus ?? ''} onChange={e => set('referral_bonus', e.target.value)} disabled={f.referrals_enabled === false} /></Field>
+        </div>}
       </Card>
       <div className="row"><Button variant="primary" busy={busy} type="submit">Save draft</Button>{!f.is_template && <Button busy={busy} type="button" onClick={() => save(true)}>Save & publish</Button>}</div>
     </form>

@@ -21,6 +21,7 @@ import { analyticsRouter } from './routes/analytics.js';
 import { billingRouter, webhookRouter } from './routes/billing.js';
 import { adminRouter } from './routes/admin.js';
 import { portalRouter, candidateUpdatesRouter } from './routes/portal.js';
+import { referralRouter } from './routes/referrals.js';
 import { requireAuth as ra } from './auth.js';
 import { attachRealtime } from './realtime.js';
 import { sendMail, notify } from './services.js';
@@ -62,7 +63,10 @@ app.use('/api/admin', requireAuth, adminRouter);
 
 const tenantApi = express.Router();
 tenantApi.use(requireAuth, requireTenant);
-tenantApi.use(companyRouter, recruitRouter, interviewRouter, codingRouter, evalRouter, analyticsRouter, billingRouter, candidateUpdatesRouter);
+// Default-deny for the referral-only `employee` role: it may use the referral portal and its own notifications, nothing else.
+const EMPLOYEE_ALLOWED = [/^\/referrals(\/|$)/, /^\/notifications(\/|$)/, /^\/notification-prefs$/, /^\/announcements$/, /^\/support$/];
+tenantApi.use((req, _res, next) => (req.auth?.role === 'employee' && !EMPLOYEE_ALLOWED.some(r => r.test(req.path)) ? next(new HttpError(403, 'Your account can only use the referral portal.', 'employee_only')) : next()));
+tenantApi.use(companyRouter, recruitRouter, interviewRouter, codingRouter, evalRouter, analyticsRouter, billingRouter, candidateUpdatesRouter, referralRouter);
 app.use('/api', mediaRouter);
 app.use('/api', tenantApi);
 void ra;

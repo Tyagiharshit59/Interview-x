@@ -27,6 +27,9 @@ Open http://localhost:5173 and **Start free trial** to create a company. A 14-da
 ### Careers portal for job seekers
 Open http://localhost:5173/portal. Job seekers create their own profile (separate from company accounts), search and save jobs, get skill-based recommendations, apply with their CV, track applications, read updates a company shares, and join interviews they were invited to. Company data is shown only for the candidate's **verified** email. Published jobs are listed unless "List on the public careers portal" is unticked in the job editor.
 
+### Employee referral portal
+HR or admins add employees in **Team → Add team member** (role *Employee*) or **Referral programme → Employees**; there is no self sign-up. Employees activate with a one-time link, then see only **Refer & earn** and **My referrals**: open roles with bonuses, a refer form (with consent and optional CV) and the progress and bonus status of their referrals. HR manages bonuses (ready → paid / declined), the leaderboard and programme rules in **Referral programme**; per-job bonuses are set in the job editor. Employee accounts cannot reach any hiring data (server-side default deny) and do not use paid team seats.
+
 ### Open it on your phone (same Wi-Fi)
 `npm run dev:phone` serves the web app over HTTPS on your local network (phones only allow camera/microphone on HTTPS). Open the **Network** address it prints (e.g. `https://192.168.x.x:5173`) on the phone, accept the self-signed certificate warning, and allow Node.js through Windows Firewall on *Private* networks if asked. Set `APP_URL` in `server/.env` to that address so emailed/printed invite links point to it.
 

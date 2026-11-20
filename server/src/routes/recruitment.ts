@@ -31,8 +31,9 @@ const jobBody = z.object({
   screening_questions: z.array(z.string().max(300)).max(20).default([]), interviewer_ids: z.array(z.string()).max(20).default([]),
   recruiter_id: z.string().nullish(), is_template: z.boolean().default(false),
   public_listing: z.boolean().default(true), // show on the public careers portal once published
+  referrals_enabled: z.boolean().default(true), referral_bonus: z.number().int().min(0).max(10_000_000).nullish(), // null = programme default
 });
-const jobOut = (r: any) => ({ ...r, public_listing: r.public_listing !== 0, required_skills: j(r.required_skills, []), preferred_skills: j(r.preferred_skills, []), screening_questions: j(r.screening_questions, []), interviewer_ids: j(r.interviewer_ids, []), is_template: !!r.is_template });
+const jobOut = (r: any) => ({ ...r, public_listing: r.public_listing !== 0, referrals_enabled: r.referrals_enabled !== 0, referral_bonus: r.referral_bonus ?? null, required_skills: j(r.required_skills, []), preferred_skills: j(r.preferred_skills, []), screening_questions: j(r.screening_questions, []), interviewer_ids: j(r.interviewer_ids, []), is_template: !!r.is_template });
 
 async function validateInterviewers(companyId: string, ids: string[]) {
   for (const id of ids) {
@@ -70,7 +71,7 @@ recruitRouter.post('/jobs', requirePerm('jobs.write'), wrap(async (req, res) => 
     company_id: tenant(req), title: b.title, department: b.department ?? null, location: b.location ?? null, employment_type: b.employment_type ?? null,
     exp_min: b.exp_min ?? null, exp_max: b.exp_max ?? null, description: b.description ?? null, responsibilities: b.responsibilities ?? null, qualifications: b.qualifications ?? null,
     required_skills: JSON.stringify(b.required_skills), preferred_skills: JSON.stringify(b.preferred_skills), screening_questions: JSON.stringify(b.screening_questions),
-    status: 'draft', is_template: +b.is_template, public_listing: +b.public_listing, recruiter_id: b.recruiter_id ?? req.auth!.userId, interviewer_ids: JSON.stringify(b.interviewer_ids),
+    status: 'draft', is_template: +b.is_template, public_listing: +b.public_listing, referrals_enabled: +b.referrals_enabled, referral_bonus: b.referral_bonus ?? null, recruiter_id: b.recruiter_id ?? req.auth!.userId, interviewer_ids: JSON.stringify(b.interviewer_ids),
     created_by: req.auth!.userId, created_at: t, updated_at: t,
   });
   await audit(tenant(req), req.auth!, 'job.created', id, req);
@@ -94,7 +95,7 @@ recruitRouter.patch('/jobs/:id', requirePerm('jobs.write'), wrap(async (req, res
     title: m.title, department: m.department ?? null, location: m.location ?? null, employment_type: m.employment_type ?? null, exp_min: m.exp_min ?? null, exp_max: m.exp_max ?? null,
     description: m.description ?? null, responsibilities: m.responsibilities ?? null, qualifications: m.qualifications ?? null,
     required_skills: JSON.stringify(m.required_skills), preferred_skills: JSON.stringify(m.preferred_skills), screening_questions: JSON.stringify(m.screening_questions),
-    recruiter_id: m.recruiter_id ?? null, interviewer_ids: JSON.stringify(m.interviewer_ids), public_listing: m.public_listing === false ? 0 : 1, updated_at: now(),
+    recruiter_id: m.recruiter_id ?? null, interviewer_ids: JSON.stringify(m.interviewer_ids), public_listing: m.public_listing === false ? 0 : 1, referrals_enabled: m.referrals_enabled === false ? 0 : 1, referral_bonus: m.referral_bonus ?? null, updated_at: now(),
   });
   await audit(tenant(req), req.auth!, 'job.updated', cur.id, req);
   res.json(jobOut(await db.jobs.get({ id: cur.id })));

@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { UserPlus, Mail, ShieldCheck, Briefcase, Users, Video, Gavel, Crown, Send, Copy, Check, Clock } from 'lucide-react';
+import { UserPlus, Mail, ShieldCheck, Briefcase, Users, Video, Gavel, Crown, Send, Copy, Check, Clock, Gift } from 'lucide-react';
 import { del, fmtDate, get, patch, post } from '../api';
 import { useAuth } from '../auth';
 import { Badge, Button, Card, ErrorBox, Field, Loading, Modal, statusBadge, useLoad, useToast, PageHeader } from '../ui';
@@ -12,14 +12,15 @@ export const ROLE_INFO: Record<string, { label: string; help: string; icon: any 
   recruiter: { label: 'Recruiter', help: 'Jobs, candidates, scheduling and the pipeline', icon: Briefcase },
   interviewer: { label: 'Interviewer', help: 'Conducts interviews, coding, notes and feedback', icon: Video },
   hiring_manager: { label: 'Hiring manager', help: 'Reviews profiles, feedback and recordings; makes the final decision', icon: Gavel },
+  employee: { label: 'Employee (referrals)', help: 'Refers candidates and tracks referral bonuses. No access to hiring data', icon: Gift },
 };
-const ASSIGNABLE = ['hr', 'recruiter', 'interviewer', 'hiring_manager', 'admin'];
+const ASSIGNABLE = ['hr', 'recruiter', 'interviewer', 'hiring_manager', 'admin', 'employee'];
 const roleLabel = (r: string) => ROLE_INFO[r]?.label ?? r.replace('_', ' ');
 const initials = (n: string) => n.split(' ').map(s => s[0]).slice(0, 2).join('').toUpperCase();
 
-function AddMember({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
+export function AddMember({ onClose, onDone, roles = ASSIGNABLE, title = 'Add a team member' }: { onClose: () => void; onDone: () => void; roles?: string[]; title?: string }) {
   const toast = useToast();
-  const [f, setF] = useState({ name: '', email: '', role: 'hr', designation: '', phone: '' });
+  const [f, setF] = useState({ name: '', email: '', role: roles[0], designation: '', phone: '' });
   const [err, setErr] = useState<any>(null); const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<null | { email: string; newAccount: boolean; link?: string }>(null);
   const [copied, setCopied] = useState(false);
@@ -49,7 +50,7 @@ function AddMember({ onClose, onDone }: { onClose: () => void; onDone: () => voi
     </Modal>
   );
   return (
-    <Modal title="Add a team member" onClose={onClose} wide>
+    <Modal title={title} onClose={onClose} wide>
       <form className="flex flex-col gap-5" onSubmit={submit}>
         <p className="mb-0 text-[14px] text-muted">Create a login for a colleague, such as your HR team. They'll get an email to set their own password. Passwords are never sent by email.</p>
         {err && !err.details && <ErrorBox error={err} />}
@@ -62,7 +63,7 @@ function AddMember({ onClose, onDone }: { onClose: () => void; onDone: () => voi
         <fieldset className="m-0 border-0 p-0">
           <legend className="mb-2 text-[13px] font-semibold">Role</legend>
           <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-            {ASSIGNABLE.map(r => { const I = ROLE_INFO[r].icon; const on = f.role === r; return (
+            {roles.map(r => { const I = ROLE_INFO[r].icon; const on = f.role === r; return (
               <label key={r} className={`flex cursor-pointer items-start gap-3 rounded-2xl border p-3.5 transition ${on ? 'border-brand-400 bg-brand-500/[0.06] shadow-ring' : 'border-line hover:border-brand-200 hover:bg-raised/60'}`}>
                 <input type="radio" name="role" className="sr-only" checked={on} onChange={() => setF({ ...f, role: r })} />
                 <span className={`grid h-9 w-9 flex-none place-items-center rounded-xl ${on ? 'bg-brand-gradient text-white shadow-glow' : 'bg-raised text-muted'}`}><I className="h-[18px] w-[18px]" /></span>
@@ -81,10 +82,10 @@ function InviteByLink({ onDone }: { onDone: () => void }) {
   const toast = useToast();
   const [inv, setInv] = useState({ email: '', role: 'hr' }); const [err, setErr] = useState<unknown>(null); const [dev, setDev] = useState('');
   return (
-    <Card title="Or send an invitation link" actions={<span className="text-[12.5px] text-muted">They create their own account</span>}>
+    <Card title="Or send an invitation link (hiring team)" actions={<span className="text-[12.5px] text-muted">They create their own account</span>}>
       <form className="flex flex-col gap-3 sm:flex-row sm:items-end" onSubmit={async e => { e.preventDefault(); setErr(null); try { const r = await post('/team/invites', inv); setInv({ ...inv, email: '' }); setDev(r.devInviteUrl || ''); toast('Invitation sent'); onDone(); } catch (x) { setErr(x); } }}>
         <div className="flex-1"><Field label="Email"><input type="email" required value={inv.email} onChange={e => setInv({ ...inv, email: e.target.value })} /></Field></div>
-        <div className="sm:w-48"><Field label="Role"><select value={inv.role} onChange={e => setInv({ ...inv, role: e.target.value })}>{ASSIGNABLE.map(r => <option key={r} value={r}>{roleLabel(r)}</option>)}</select></Field></div>
+        <div className="sm:w-48"><Field label="Role"><select value={inv.role} onChange={e => setInv({ ...inv, role: e.target.value })}>{ASSIGNABLE.filter(r => r !== 'employee').map(r => <option key={r} value={r}>{roleLabel(r)}</option>)}</select></Field></div>
         <Button type="submit"><Send className="h-4 w-4" />Send invite</Button>
       </form>
       <div className="mt-3"><ErrorBox error={err} /></div>
@@ -100,14 +101,15 @@ export function Team() {
   const [adding, setAddingState] = useState(sp.get('add') === '1');
   const setAdding = (v: boolean) => { setAddingState(v); if (!v && sp.get('add')) { sp.delete('add'); setSp(sp, { replace: true }); } };
   if (!data) return error ? <ErrorBox error={error} /> : <Loading />;
-  const manage = can('members.manage');
+  const manage = can('members.manage'); const empManage = can('employees.manage');
+  const addRoles = manage ? ASSIGNABLE : empManage ? ['employee'] : [];
   const counts = { total: data.members.length, active: data.members.filter((m: any) => m.status === 'active' && !m.pending_activation).length, pending: data.members.filter((m: any) => m.pending_activation).length + data.invites.length };
 
   return (
     <div className="flex flex-col gap-6">
       <PageHeader eyebrow="Company" title="Team & permissions" description="Create accounts for your HR team, recruiters and interviewers, and control what each role can do."
-        actions={manage && <Button variant="primary" onClick={() => setAdding(true)}><UserPlus className="h-4 w-4" />Add team member</Button>} />
-      {adding && <AddMember onClose={() => setAdding(false)} onDone={() => void reload()} />}
+        actions={addRoles.length > 0 && <Button variant="primary" onClick={() => setAdding(true)}><UserPlus className="h-4 w-4" />{manage ? 'Add team member' : 'Add employee'}</Button>} />
+      {adding && <AddMember roles={addRoles} title={manage ? 'Add a team member' : 'Add an employee (referral portal)'} onClose={() => setAdding(false)} onDone={() => void reload()} />}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         {[['Team members', counts.total, Users], ['Active', counts.active, Check], ['Awaiting activation', counts.pending, Clock]].map(([l, v, I]: any) => (
@@ -122,6 +124,7 @@ export function Team() {
         <div className="table-wrap"><table><thead><tr><th>Member</th><th>Role</th><th>Status</th><th className="right">Actions</th></tr></thead><tbody>
           {data.members.map((m: any) => {
             const editable = manage && m.user_id !== me?.user.id && (m.role !== 'owner' || me?.role === 'owner');
+            const empRow = !manage && empManage && m.role === 'employee';
             return (
               <tr key={m.id}>
                 <td>
@@ -143,8 +146,8 @@ export function Team() {
                 </td>
                 <td className="right">
                   <div className="flex justify-end gap-2">
-                    {manage && m.pending_activation && <Button size="sm" onClick={async () => { try { const r = await post(`/team/members/${m.id}/resend-activation`); toast('Activation email sent again'); if (r.devActivateUrl) void navigator.clipboard?.writeText(r.devActivateUrl); } catch (x: any) { toast(x.message, 'error'); } }}><Mail className="h-3.5 w-3.5" />Resend</Button>}
-                    {editable && <Button size="sm" variant={m.status === 'active' ? undefined : 'primary'} onClick={async () => { try { await patch(`/team/members/${m.id}`, { status: m.status === 'active' ? 'disabled' : 'active' }); void reload(); } catch (x: any) { toast(x.message, 'error'); } }}>{m.status === 'active' ? 'Disable' : 'Enable'}</Button>}
+                    {(manage || empRow) && m.pending_activation && <Button size="sm" onClick={async () => { try { const r = await post(`/team/members/${m.id}/resend-activation`); toast('Activation email sent again'); if (r.devActivateUrl) void navigator.clipboard?.writeText(r.devActivateUrl); } catch (x: any) { toast(x.message, 'error'); } }}><Mail className="h-3.5 w-3.5" />Resend</Button>}
+                    {(editable || empRow) && <Button size="sm" variant={m.status === 'active' ? undefined : 'primary'} onClick={async () => { try { await patch(`/team/members/${m.id}`, { status: m.status === 'active' ? 'disabled' : 'active' }); void reload(); } catch (x: any) { toast(x.message, 'error'); } }}>{m.status === 'active' ? 'Disable' : 'Enable'}</Button>}
                   </div>
                 </td>
               </tr>

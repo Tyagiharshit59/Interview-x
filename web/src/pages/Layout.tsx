@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { NavLink, Outlet, useNavigate, Link } from 'react-router-dom';
 import {
   LayoutDashboard, Briefcase, Users, Video, Puzzle, BarChart3, UsersRound, Settings, CreditCard, ShieldCheck,
-  Bell, Menu, X, LogOut, Megaphone, Sparkles, ChevronsUpDown,
+  Bell, Menu, X, LogOut, Megaphone, Sparkles, ChevronsUpDown, Gift, HeartHandshake, Award,
 } from 'lucide-react';
 import { useAuth } from '../auth';
 import { get, post, fmtDate } from '../api';
@@ -21,7 +21,7 @@ export function Logo({ light }: { light?: boolean }) {
 function NavItem({ to, icon, children, onClick }: { to: string; icon: ReactNode; children: ReactNode; onClick: () => void }) {
   return (
     <NavLink
-      to={to} onClick={onClick}
+      to={to} onClick={onClick} end={to === '/referrals'}
       className={({ isActive }) => `group relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-[14px] font-semibold no-underline transition-all
         ${isActive ? 'bg-white/[0.08] text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)]' : 'text-slate-400 hover:bg-white/[0.04] hover:text-white'}`}
     >
@@ -99,7 +99,13 @@ export function Layout() {
         )}
 
         <nav className="relative mt-2 flex flex-col gap-0.5">
-          {isAdminOnly ? <NavItem to="/admin" icon={<ShieldCheck className={ic} />} onClick={close}>Platform console</NavItem> : (
+          {me?.role === 'employee' ? (
+            <>
+              <Section>Referrals</Section>
+              <NavItem to="/referrals" icon={<Gift className={ic} />} onClick={close}>Refer & earn</NavItem>
+              <NavItem to="/referrals/mine" icon={<Award className={ic} />} onClick={close}>My referrals</NavItem>
+            </>
+          ) : isAdminOnly ? <NavItem to="/admin" icon={<ShieldCheck className={ic} />} onClick={close}>Platform console</NavItem> : (
             <>
               <Section>Overview</Section>
               <NavItem to="/dashboard" icon={<LayoutDashboard className={ic} />} onClick={close}>Dashboard</NavItem>
@@ -111,6 +117,8 @@ export function Layout() {
               {can('analytics.view') && <NavItem to="/analytics" icon={<BarChart3 className={ic} />} onClick={close}>Analytics</NavItem>}
               <Section>Company</Section>
               <NavItem to="/team" icon={<UsersRound className={ic} />} onClick={close}>Team</NavItem>
+              {can('referrals.manage') && <NavItem to="/referrals/manage" icon={<HeartHandshake className={ic} />} onClick={close}>Referral programme</NavItem>}
+              <NavItem to="/referrals" icon={<Gift className={ic} />} onClick={close}>Refer & earn</NavItem>
               {can('company.manage') && <NavItem to="/settings" icon={<Settings className={ic} />} onClick={close}>Settings</NavItem>}
               {can('billing.manage') && <NavItem to="/billing" icon={<CreditCard className={ic} />} onClick={close}>Billing & usage</NavItem>}
               {me?.user.isSuperAdmin && <NavItem to="/admin" icon={<ShieldCheck className={ic} />} onClick={close}>Platform console</NavItem>}

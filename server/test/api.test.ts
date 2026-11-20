@@ -372,6 +372,71 @@ test('candidate portal: job board, verified-only access, apply, track, shared up
   assert.equal((await P.req('GET', '/portal/applications')).data.items.find((x: any) => x.id === ap.data.applicationId).status.key, 'withdrawn');
 });
 
+test('employee referral portal: HR-created accounts, employee isolation, referral, bonus lifecycle', async () => {
+  // HR (not an admin) can create employee accounts, but no other roles
+  const H2 = new Client();
+  assert.equal((await H2.req('POST', '/auth/login', { email: 'hema@acme.test', password: 'HemaPassw0rd' })).status, 200);
+  assert.equal((await H2.req('POST', '/team/members', { name: 'Nope Recruiter', email: 'nope@acme.test', role: 'recruiter' })).status, 403);
+  const emp = await H2.req('POST', '/team/members', { name: 'Esha Employee', email: 'esha@acme.test', role: 'employee', designation: 'Support Engineer' });
+  assert.equal(emp.status, 201); assert.ok(emp.data.devActivateUrl);
+  const E = new Client();
+  const act = await E.req('POST', '/auth/activate', { token: new URL(emp.data.devActivateUrl).searchParams.get('token'), password: 'EshaPassw0rd' });
+  assert.equal(act.status, 200); assert.equal(act.data.role, 'employee');
+
+  // default-deny: an employee cannot reach hiring data, questions, team or settings
+  for (const u of ['/jobs', '/candidates', '/interviews', '/questions', '/team', '/company', '/analytics', '/usage', '/evaluation-template', '/referrals'])
+    assert.equal((await E.req('GET', u)).status, 403, `employee must not read ${u}`);
+
+  // programme + a referral-enabled job with its own bonus
+  assert.equal((await A.req('PUT', '/referrals/program', { enabled: true, defaultBonus: 20000, payoutAfterDays: 0, terms: 'Paid after joining.' })).status, 200);
+  const job = await A.req('POST', '/jobs', { title: 'Referral QA Engineer', required_skills: ['testing'], referral_bonus: 35000 });
+  await A.req('POST', `/jobs/${job.data.id}/status`, { status: 'published' });
+  const open = await E.req('GET', '/referrals/jobs');
+  assert.equal(open.status, 200);
+  const listed = open.data.items.find((x: any) => x.id === job.data.id);
+  assert.equal(listed.bonus, 35000);
+  assert.equal(JSON.stringify(open.data).includes('applicants'), false);
+
+  // refer (with consent), no self-referral, no duplicates
+  const base = { job_id: job.data.id, relationship: 'former_colleague', consent: true };
+  assert.equal((await E.req('POST', '/referrals', { ...base, name: 'Esha Employee', email: 'esha@acme.test' })).status, 400);
+  assert.equal((await E.req('POST', '/referrals', { ...base, name: 'Kiran Rao', email: 'kiran@mail.test', consent: false })).status, 422);
+  const ref = await E.req('POST', '/referrals', { ...base, name: 'Kiran Rao', email: 'Kiran@Mail.test', note: 'Great tester' });
+  assert.equal(ref.status, 201);
+  assert.equal((await E.req('POST', '/referrals', { ...base, name: 'Kiran Rao', email: 'kiran@mail.test' })).status, 409);
+
+  // employee sees a friendly status for their own referral only
+  let mine = await E.req('GET', '/referrals/mine');
+  assert.equal(mine.data.items.length, 1);
+  assert.equal(mine.data.items[0].status.label, 'Referral received');
+  assert.equal(mine.data.items[0].bonus.status, 'pending'); assert.equal(mine.data.items[0].bonus.amount, 35000);
+  assert.equal(JSON.stringify(mine.data).includes('match'), false);
+
+  // HR sees it with the referrer; the candidate enters the normal pipeline as a referral
+  const all = await H2.req('GET', '/referrals');
+  const row = all.data.items.find((x: any) => x.id === ref.data.id);
+  assert.equal(row.referrer_name, 'Esha Employee');
+  const cand = (await A.req('GET', '/candidates?q=kiran')).data.items.find((c: any) => c.email.toLowerCase() === 'kiran@mail.test');
+  assert.equal(cand.source, 'referral');
+
+  // bonus cannot be paid before the hire; after "Selected" (waiting period 0) it becomes payable, then paid
+  assert.equal((await H2.req('PATCH', `/referrals/${ref.data.id}/bonus`, { action: 'mark_paid' })).status, 400);
+  const appId = (await A.req('GET', `/candidates/${cand.id}`)).data.applications.find((a: any) => a.job_id === job.data.id).id;
+  assert.equal((await A.req('PATCH', `/applications/${appId}/stage`, { stage: 'Selected' })).status, 200);
+  mine = await E.req('GET', '/referrals/mine');
+  assert.equal(mine.data.items[0].status.key, 'hired'); assert.equal(mine.data.items[0].bonus.status, 'eligible');
+  assert.equal((await E.req('PATCH', `/referrals/${ref.data.id}/bonus`, { action: 'mark_paid' })).status, 403, 'employees cannot pay themselves');
+  assert.equal((await H2.req('PATCH', `/referrals/${ref.data.id}/bonus`, { action: 'mark_paid', note: 'Nov payroll' })).status, 200);
+  mine = await E.req('GET', '/referrals/mine');
+  assert.equal(mine.data.items[0].bonus.status, 'paid'); assert.equal(mine.data.summary.paid, 35000);
+
+  // HR can disable the employee; the session then stops working
+  const team = await A.req('GET', '/team');
+  const em = team.data.members.find((m: any) => m.email === 'esha@acme.test');
+  assert.equal((await H2.req('PATCH', `/team/members/${em.id}`, { status: 'disabled' })).status, 200);
+  assert.equal((await E.req('GET', '/referrals/mine')).status, 403);
+});
+
 test('login lockout, password reset invalidates sessions, MFA', async () => {
   const C = new Client();
   for (let i = 0; i < 5; i++) assert.equal((await C.req('POST', '/auth/login', { email: 'bob@beta.test', password: 'wrong-pass1' })).status, 401);
