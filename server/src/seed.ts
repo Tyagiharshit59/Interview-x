@@ -16,19 +16,18 @@ const PLANS = [
     e: { members: -1, interviews_per_month: -1, recording: true, coding: true, code_runs_per_month: -1, ai: true, ai_calls_per_month: -1, secondary_camera: true, recording_retention_days: 365, recording_storage_mb: -1, analytics: true, sso: true, api_access: true, custom_evaluation: true } },
 ];
 
-export function ensureSeed() {
+export async function ensureSeed() {
   for (const p of PLANS) {
-    if (db.prepare('SELECT 1 FROM plans WHERE code=?').get(p.code)) continue;
-    db.prepare('INSERT INTO plans(id,code,name,description,price_monthly,price_yearly,entitlements,overage,is_public,sort_order,trial_days) VALUES (?,?,?,?,?,?,?,?,?,?,14)')
-      .run(uid(), p.code, p.name, p.desc, p.m, p.y, JSON.stringify(p.e), JSON.stringify({ interviews: 99, code_runs: 1 }), (p as any).isPublic === false ? 0 : 1, p.sort);
+    if (await db.plans.exists({ code: p.code })) continue;
+    await db.plans.insert({ code: p.code, name: p.name, description: p.desc, price_monthly: p.m, price_yearly: p.y, currency: 'INR', entitlements: JSON.stringify(p.e), overage: JSON.stringify({ interviews: 99, code_runs: 1 }), is_public: (p as any).isPublic === false ? 0 : 1, is_active: 1, sort_order: p.sort, trial_days: 14 });
   }
-  syncPlansFromLegacy(db);
+  await syncPlansFromLegacy();
   for (const [k, d] of [['ai_assistance', 'AI interview intelligence'], ['secondary_camera', 'QR secondary camera'], ['whiteboard', 'Collaborative whiteboard']] as const) {
-    db.prepare('INSERT OR IGNORE INTO feature_flags(key,enabled,description) VALUES (?,1,?)').run(k, d);
+    await db.feature_flags.upsert({ key: k }, {}, { enabled: 1, description: d });
   }
-  if (!db.prepare('SELECT 1 FROM coupons').get()) db.prepare('INSERT INTO coupons(code,percent_off,max_redemptions) VALUES (?,?,?)').run('WELCOME10', 10, 1000);
+  if (!(await db.coupons.exists({}))) await db.coupons.insert({ code: 'WELCOME10', percent_off: 10, max_redemptions: 1000, redeemed: 0, expires_at: null, is_active: 1 });
 
-  if (!db.prepare('SELECT 1 FROM users WHERE is_super_admin=1').get()) {
+  if (!(await db.users.exists({ is_super_admin: 1 }))) {
     // Never ship a known default password: use the env value, or generate one and print it once (dev only).
     let pw = config.superAdminPassword;
     let generated = false;
@@ -36,11 +35,10 @@ export function ensureSeed() {
       if (config.isProd) { console.warn('[seed] No SUPER_ADMIN_PASSWORD set; super admin was NOT created.'); return; }
       pw = crypto.randomBytes(9).toString('base64url') + '9'; generated = true;
     }
-    const adminId = uid();
-    db.prepare('INSERT INTO users(id,email,password_hash,name,is_super_admin,email_verified,created_at) VALUES (?,?,?,?,1,1,?)').run(adminId, config.superAdminEmail, bcrypt.hashSync(pw, 12), 'Platform Admin', now());
-    db.prepare("INSERT OR IGNORE INTO internal_staff(user_id,role,status,created_at) VALUES (?,'super_admin','active',?)").run(adminId, now());
+    const adminId = await db.users.insert({ email: config.superAdminEmail.toLowerCase(), password_hash: bcrypt.hashSync(pw, 12), name: 'Platform Admin', is_super_admin: 1, email_verified: 1, mfa_secret: null, mfa_enabled: 0, failed_logins: 0, locked_until: null, session_version: 0, created_at: now() });
+    await db.internal_staff.upsert({ user_id: adminId }, { role: 'super_admin', status: 'active' }, { created_at: now() });
     if (generated) console.log(`\n[seed] Super admin created (dev). Email: ${config.superAdminEmail}  Password: ${pw}\n       Set SUPER_ADMIN_PASSWORD in .env to choose your own.\n`);
   }
 }
 
-if (process.argv[1]?.endsWith('seed.ts')) { ensureSeed(); console.log('Seed complete.'); }
+if (process.argv[1]?.endsWith('seed.ts')) { await ensureSeed(); console.log('Seed complete.'); process.exit(0); }

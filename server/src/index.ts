@@ -6,7 +6,7 @@ import http from 'node:http';
 import path from 'node:path';
 import fs from 'node:fs';
 import { config } from './config.js';
-import { db, now } from './db.js';
+import { db, now, closeDb } from './db.js';
 import { ensureSeed } from './seed.js';
 import { HttpError } from './util.js';
 import { requireAuth, requireTenant } from './auth.js';
@@ -24,7 +24,7 @@ import { requireAuth as ra } from './auth.js';
 import { attachRealtime } from './realtime.js';
 import { sendMail, notify } from './services.js';
 
-ensureSeed();
+await ensureSeed();
 
 const app = express();
 app.disable('x-powered-by');
@@ -87,34 +87,50 @@ const server = http.createServer(app);
 attachRealtime(server);
 
 /* Background jobs: reminders, trial/renewal notices, retention purge. */
-function backgroundJobs() {
+let jobsRunning = false;
+async function backgroundJobs() {
+  if (jobsRunning) return; jobsRunning = true; // never overlap runs
   try {
-    const purged = purgeExpiredRecordings(); if (purged) console.log(`[jobs] purged ${purged} expired recording(s)`);
+    const purged = await purgeExpiredRecordings(); if (purged) console.log(`[jobs] purged ${purged} expired recording(s)`);
     // 24h and 1h reminders (once each, tracked via audit_logs)
-    const soon = db.prepare(`SELECT i.*, c.email, c.name cname FROM interviews i JOIN applications a ON a.id=i.application_id JOIN candidates c ON c.id=a.candidate_id
-      WHERE i.status='scheduled' AND i.scheduled_at>? AND i.scheduled_at<?`).all(now(), new Date(Date.now() + 24 * 3600e3).toISOString()) as any[];
+    const soon = await db.interviews.list({ status: 'scheduled', scheduled_at: { $gt: now(), $lt: new Date(Date.now() + 24 * 3600e3).toISOString() } });
     for (const i of soon) {
       const hrs = (new Date(i.scheduled_at).getTime() - Date.now()) / 3600e3;
       const tag = hrs <= 1.2 ? 'reminder_1h' : hrs <= 24 ? 'reminder_24h' : null;
       if (!tag) continue;
-      if (db.prepare('SELECT 1 FROM audit_logs WHERE action=? AND target=?').get(tag, i.id)) continue;
-      db.prepare('INSERT INTO audit_logs(id,company_id,action,target,created_at) VALUES (?,?,?,?,?)').run(crypto.randomUUID(), i.company_id, tag, i.id, now());
-      for (const p of db.prepare('SELECT p.user_id FROM interview_participants p LEFT JOIN notification_prefs n ON n.user_id=p.user_id WHERE p.interview_id=? AND (n.reminders IS NULL OR n.reminders=1)').all(i.id) as any[])
-        notify(i.company_id, p.user_id, 'reminder', `Upcoming interview: ${i.title}`, `Starts ${new Date(i.scheduled_at).toUTCString()}`, `/interviews/${i.id}`, { email: tag === 'reminder_1h' });
-      if (tag === 'reminder_24h') void sendMail(i.company_id, i.email, `Reminder: your interview "${i.title}" is tomorrow`, 'Use the personal link from your invitation email to join. The room opens 30 minutes before the start time.');
+      if (await db.audit_logs.exists({ action: tag, target: i.id })) continue;
+      await db.audit_logs.insert({ company_id: i.company_id, action: tag, target: i.id, created_at: now() });
+      const parts = await db.interview_participants.list({ interview_id: i.id });
+      const prefs = new Map((await db.notification_prefs.list({ user_id: { $in: parts.map(p => p.user_id) } })).map(n => [n.user_id, n]));
+      for (const p of parts) {
+        const n = prefs.get(p.user_id);
+        if (n && n.reminders != null && n.reminders !== 1) continue;
+        await notify(i.company_id, p.user_id, 'reminder', `Upcoming interview: ${i.title}`, `Starts ${new Date(i.scheduled_at).toUTCString()}`, `/interviews/${i.id}`, { email: tag === 'reminder_1h' });
+      }
+      if (tag === 'reminder_24h') {
+        const app = await db.applications.get({ id: i.application_id, company_id: i.company_id });
+        const cand = app ? await db.candidates.get({ id: app.candidate_id, company_id: i.company_id }) : null;
+        if (cand?.email) void sendMail(i.company_id, cand.email, `Reminder: your interview "${i.title}" is tomorrow`, 'Use the personal link from your invitation email to join. The room opens 30 minutes before the start time.');
+      }
     }
     // trial ending in <=3 days
-    for (const s of db.prepare("SELECT company_id, trial_ends_at FROM subscriptions WHERE status='trialing' AND trial_ends_at>? AND trial_ends_at<?").all(now(), new Date(Date.now() + 3 * 864e5).toISOString()) as any[]) {
-      if (db.prepare("SELECT 1 FROM audit_logs WHERE action='trial_notice' AND target=?").get(s.company_id)) continue;
-      db.prepare("INSERT INTO audit_logs(id,company_id,action,target,created_at) VALUES (?,?,'trial_notice',?,?)").run(crypto.randomUUID(), s.company_id, s.company_id, now());
-      for (const m of db.prepare("SELECT user_id FROM company_members WHERE company_id=? AND role IN ('owner','admin')").all(s.company_id) as any[])
-        notify(s.company_id, m.user_id, 'billing', 'Your free trial ends soon', `Trial ends ${new Date(s.trial_ends_at).toDateString()}. Choose a plan to keep access.`, '/billing', { email: true });
+    for (const s of await db.subscriptions.list({ status: 'trialing', trial_ends_at: { $gt: now(), $lt: new Date(Date.now() + 3 * 864e5).toISOString() } })) {
+      if (await db.audit_logs.exists({ action: 'trial_notice', target: s.company_id })) continue;
+      await db.audit_logs.insert({ company_id: s.company_id, action: 'trial_notice', target: s.company_id, created_at: now() });
+      for (const m of await db.company_members.list({ company_id: s.company_id, role: { $in: ['owner', 'admin'] } }))
+        await notify(s.company_id, m.user_id, 'billing', 'Your free trial ends soon', `Trial ends ${new Date(s.trial_ends_at).toDateString()}. Choose a plan to keep access.`, '/billing', { email: true });
     }
-    subscriptionNotices();
+    await subscriptionNotices();
   } catch (e) { console.error('[jobs]', e); }
+  finally { jobsRunning = false; }
 }
-import crypto from 'node:crypto';
-setInterval(backgroundJobs, 10 * 60_000).unref();
-setTimeout(backgroundJobs, 5000).unref();
+setInterval(() => void backgroundJobs(), 10 * 60_000).unref();
+setTimeout(() => void backgroundJobs(), 5000).unref();
 
 server.listen(config.port, () => console.log(`IntervueX API listening on http://localhost:${config.port}  (runner: ${config.runner.mode})`));
+
+// Graceful shutdown: stop accepting connections, then close MongoDB (and the embedded dev mongod, if any).
+for (const sig of ['SIGINT', 'SIGTERM'] as const) process.once(sig, () => {
+  server.close(); closeDb().catch(() => {}).finally(() => process.exit(0));
+  setTimeout(() => process.exit(0), 5000).unref();
+});

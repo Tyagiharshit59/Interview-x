@@ -53,29 +53,36 @@ function setYText(r: Room, name: string, content: string): Uint8Array {
 }
 const b64 = (u: Uint8Array) => Buffer.from(u).toString('base64');
 
-function loadRoom(interviewId: string, companyId: string): Room {
-  let r = rooms.get(interviewId);
-  if (r) return r;
-  const i = db.prepare('SELECT config FROM interviews WHERE id=?').get(interviewId) as any;
+const loading = new Map<string, Promise<Room>>();
+async function loadRoom(interviewId: string, companyId: string): Promise<Room> {
+  const existing = rooms.get(interviewId); if (existing) return existing;
+  let pending = loading.get(interviewId);
+  if (!pending) { pending = buildRoom(interviewId, companyId).finally(() => loading.delete(interviewId)); loading.set(interviewId, pending); }
+  return pending;
+}
+async function buildRoom(interviewId: string, companyId: string): Promise<Room> {
+  let r: Room;
+  const i = await db.interviews.get({ id: interviewId, company_id: companyId });
   const cfg = j(i?.config, {} as any);
   const files: Room['files'] = {};
-  const snaps = db.prepare('SELECT file_name, language, content FROM code_snapshots WHERE interview_id=? AND company_id=? ORDER BY created_at').all(interviewId, companyId) as any[];
+  const snaps = await db.code_snapshots.list({ interview_id: interviewId, company_id: companyId }, { sort: { created_at: 1, _seq: 1 } });
   for (const s of snaps) files[s.file_name] = { content: s.content, language: s.language || 'javascript', version: 0 };
   let questionId: string | null = cfg.codingQuestionId || null;
   if (!Object.keys(files).length) {
     const lang = cfg.language || 'javascript';
     let starter = '// Write your solution here\n';
     if (questionId) {
-      const q = db.prepare('SELECT starter_code FROM coding_questions WHERE id=? AND company_id=?').get(questionId, companyId) as any;
+      const q = await db.coding_questions.get({ id: questionId, company_id: companyId });
       starter = j(q?.starter_code, {} as any)[lang] || starter;
     }
     files['main.' + (LANGUAGES[lang]?.ext || 'txt')] = { content: starter, language: lang, version: 0 };
   }
-  const wb = db.prepare('SELECT data FROM whiteboard_sessions WHERE interview_id=? AND company_id=?').get(interviewId, companyId) as any;
-  const cons = (k: string) => { const c = db.prepare('SELECT granted FROM consent_records WHERE interview_id=? AND kind=? AND company_id=? ORDER BY created_at DESC LIMIT 1').get(interviewId, k, companyId) as any; return c ? !!c.granted : null; };
+  const wb = await db.whiteboard_sessions.get({ interview_id: interviewId, company_id: companyId });
+  const cons = async (k: string) => { const c = await db.consent_records.get({ interview_id: interviewId, kind: k, company_id: companyId }, { sort: { created_at: -1, _seq: -1 } }); return c ? !!c.granted : null; };
+  const consRecording = await cons('recording'), consSecondary = await cons('secondary_camera');
   r = {
     id: interviewId, companyId, peers: new Map(), files, activeFile: Object.keys(files)[0], codeEditAllowed: true, screenAllowed: new Set(), whiteboard: j(wb?.data, []),
-    recording: { active: false, paused: false, sources: [] }, consents: { recording: cons('recording'), secondaryCamera: cons('secondary_camera') }, paused: false,
+    recording: { active: false, paused: false, sources: [] }, consents: { recording: consRecording, secondaryCamera: consSecondary }, paused: false,
     dirtyFiles: new Set(), wbDirty: false, lastSnap: 0, questionId,
   };
   rooms.set(interviewId, r);
@@ -87,37 +94,37 @@ const staff = (r: Room) => [...r.peers.values()].filter(p => p.kind === 'staff')
 const admitted = (r: Room) => [...r.peers.values()].filter(p => p.admitted);
 const broadcast = (r: Room, msg: any, except?: string, filter?: (p: Peer) => boolean) => { for (const p of admitted(r)) if (p.id !== except && (!filter || filter(p))) send(p, msg); };
 const pub = (p: Peer) => ({ id: p.id, kind: p.kind, name: p.name, role: p.role, media: p.media });
-const offsetSec = (interviewId: string) => {
-  const i = db.prepare('SELECT started_at FROM interviews WHERE id=?').get(interviewId) as any;
+const offsetSec = async (interviewId: string) => {
+  const i = await db.interviews.get({ id: interviewId });
   return i?.started_at ? Math.max(0, (Date.now() - new Date(i.started_at).getTime()) / 1000) : 0;
 };
-const addEvent = (r: Room, kind: string, label: string | null, author?: string) => {
-  const off = offsetSec(r.id);
-  db.prepare('INSERT INTO recording_events(id,company_id,interview_id,kind,label,offset_sec,author_id,created_at) VALUES (?,?,?,?,?,?,?,?)').run(uid(), r.companyId, r.id, kind, label, off, author ?? null, now());
+const addEvent = async (r: Room, kind: string, label: string | null, author?: string) => {
+  const off = await offsetSec(r.id);
+  await db.recording_events.insert({ company_id: r.companyId, interview_id: r.id, kind, label, offset_sec: off, author_id: author ?? null, created_at: now() });
   broadcast(r, { t: 'timeline', event: { kind, label, offset_sec: off } }, undefined, p => p.kind === 'staff');
 };
 
-function persistCode(r: Room, force = false) {
+async function persistCode(r: Room, force = false) {
   const t = Date.now();
   if (!force && t - r.lastSnap < 15_000) return;
   r.lastSnap = t;
-  for (const f of r.dirtyFiles) {
-    const file = r.files[f]; if (!file) continue;
-    db.prepare('INSERT INTO code_snapshots(id,company_id,interview_id,file_name,language,content,author,created_at) VALUES (?,?,?,?,?,?,?,?)').run(uid(), r.companyId, r.id, f, file.language, file.content, 'collab', now());
-  }
+  // Take the work synchronously so concurrent calls never write the same snapshot twice.
+  const files = [...r.dirtyFiles].map(f => [f, r.files[f]] as const).filter(([, file]) => !!file).map(([f, file]) => ({ f, language: file!.language, content: file!.content }));
   r.dirtyFiles.clear();
-  if (r.wbDirty) {
-    db.prepare(`INSERT INTO whiteboard_sessions(id,company_id,interview_id,data,updated_at) VALUES (?,?,?,?,?) ON CONFLICT(interview_id) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at`).run(uid(), r.companyId, r.id, JSON.stringify(r.whiteboard), now());
-    r.wbDirty = false;
-  }
+  const wb = r.wbDirty ? JSON.stringify(r.whiteboard) : null; r.wbDirty = false;
+  try {
+    for (const x of files) await db.code_snapshots.insert({ company_id: r.companyId, interview_id: r.id, file_name: x.f, language: x.language, content: x.content, author: 'collab', created_at: now() });
+    if (wb !== null) await db.whiteboard_sessions.upsert({ interview_id: r.id }, { data: wb, updated_at: now() }, { company_id: r.companyId });
+  } catch (e) { console.error('[realtime] persist failed', e); for (const x of files) r.dirtyFiles.add(x.f); if (wb !== null) r.wbDirty = true; }
 }
-setInterval(() => { for (const r of rooms.values()) persistCode(r); }, 15_000).unref();
+setInterval(() => { for (const r of rooms.values()) void persistCode(r); }, 15_000).unref();
 
-function stateFor(r: Room, me: Peer) {
-  const iv = db.prepare('SELECT status, started_at, config, duration_min FROM interviews WHERE id=?').get(r.id) as any;
+async function stateFor(r: Room, me: Peer) {
+  const iv = await db.interviews.get({ id: r.id, company_id: r.companyId });
   const cfg = j(iv.config, {} as any);
-  const q = r.questionId ? db.prepare('SELECT id,title,prompt,starter_code,languages FROM coding_questions WHERE id=? AND company_id=?').get(r.questionId, r.companyId) as any : null;
-  const chat = db.prepare('SELECT sender_name name, sender_role role, body text, created_at at FROM chat_messages WHERE interview_id=? AND company_id=? ORDER BY created_at DESC LIMIT 100').all(r.id, r.companyId).reverse();
+  const q = r.questionId ? await db.coding_questions.get({ id: r.questionId, company_id: r.companyId }) : null;
+  const chat = (await db.chat_messages.list({ interview_id: r.id, company_id: r.companyId }, { sort: { created_at: -1, _seq: -1 }, limit: 100 }))
+    .reverse().map(c => ({ name: c.sender_name, role: c.sender_role, text: c.body, at: c.created_at }));
   return {
     status: iv.status, startedAt: iv.started_at, durationMin: iv.duration_min, config: { coding: !!cfg.coding, whiteboard: cfg.whiteboard !== false, recording: !!cfg.recording, secondaryCamera: !!cfg.secondaryCamera },
     files: r.files, activeFile: r.activeFile, codeEditAllowed: r.codeEditAllowed, whiteboard: r.whiteboard, recording: r.recording, consents: r.consents, paused: r.paused,
@@ -126,12 +133,13 @@ function stateFor(r: Room, me: Peer) {
   };
 }
 
-function admit(r: Room, p: Peer) {
+async function admit(r: Room, p: Peer) {
   p.admitted = true;
+  const state = await stateFor(r, p);
   const others = admitted(r).filter(x => x.id !== p.id && visible(p, x));
-  send(p, { t: 'welcome', you: pub(p), peers: others.map(pub), state: stateFor(r, p) });
+  send(p, { t: 'welcome', you: pub(p), peers: others.map(pub), state });
   broadcast(r, { t: 'peer-joined', peer: pub(p) }, p.id, x => visible(x, p));
-  if (p.kind === 'candidate') addEvent(r, 'candidate_joined', p.name);
+  if (p.kind === 'candidate') await addEvent(r, 'candidate_joined', p.name);
   pushWaiting(r);
 }
 /** Visibility: a secondary camera only sees staff, and is only seen by staff. */
@@ -151,7 +159,7 @@ export function attachRealtime(server: Server) {
     const tk = tickets.get(url.searchParams.get('ticket') || '');
     if (!tk || tk.exp < Date.now()) { socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n'); return socket.destroy(); }
     tickets.delete(url.searchParams.get('ticket')!); // single use
-    wss.handleUpgrade(req, socket, head, ws => onConnect(ws, tk));
+    wss.handleUpgrade(req, socket, head, ws => { onConnect(ws, tk).catch(e => { console.error('[realtime] connect failed', e); try { ws.close(1011, 'Server error'); } catch { /* closed */ } }); });
   });
 
   setInterval(() => {
@@ -162,10 +170,13 @@ export function attachRealtime(server: Server) {
   }, 20_000).unref();
 }
 
-function onConnect(ws: WebSocket, tk: Ticket) {
-  const iv = db.prepare('SELECT status FROM interviews WHERE id=? AND company_id=?').get(tk.interviewId, tk.companyId) as any;
+async function onConnect(ws: WebSocket, tk: Ticket) {
+  // Buffer messages that arrive while the room loads, then process each peer's messages strictly in order.
+  const early: any[] = []; const onEarly = (raw: any) => early.push(raw); ws.on('message', onEarly);
+  const iv = await db.interviews.get({ id: tk.interviewId, company_id: tk.companyId });
   if (!iv || iv.status === 'cancelled') { ws.close(4403, 'Interview unavailable'); return; }
-  const r = loadRoom(tk.interviewId, tk.companyId);
+  const r = await loadRoom(tk.interviewId, tk.companyId);
+  ws.off('message', onEarly);
   if (r.peers.size >= 10) { ws.close(4429, 'Room is full'); return; }
   // Replace a stale connection of the same person (reconnect)
   for (const old of r.peers.values()) {
@@ -179,38 +190,42 @@ function onConnect(ws: WebSocket, tk: Ticket) {
   };
   r.peers.set(peer.id, peer);
   ws.on('pong', () => { peer.alive = true; });
-  if (peer.admitted) admit(r, peer);
-  else { send(peer, { t: 'waiting-room', you: { id: peer.id, name: peer.name } }); pushWaiting(r); }
-
-  ws.on('message', raw => {
+  let queue: Promise<void> = Promise.resolve();
+  const enqueue = (raw: any) => {
     peer.alive = true;
     let m: any;
     try { m = JSON.parse(raw.toString()); } catch { return; }
-    try { handle(r, peer, m); } catch (e: any) { send(peer, { t: 'error', message: e?.message || 'Something went wrong', code: e?.code }); }
-  });
-  ws.on('close', () => {
+    queue = queue.then(() => handle(r, peer, m)).catch((e: any) => send(peer, { t: 'error', message: e?.message || 'Something went wrong', code: e?.code }));
+  };
+  if (peer.admitted) queue = queue.then(() => admit(r, peer)).catch(e => console.error('[realtime] admit failed', e));
+  else { send(peer, { t: 'waiting-room', you: { id: peer.id, name: peer.name } }); pushWaiting(r); }
+  for (const raw of early) enqueue(raw);
+  ws.on('message', enqueue);
+  ws.on('close', () => { void (async () => {
     if (r.peers.get(peer.id)?.ws !== ws) return;
     r.peers.delete(peer.id);
     r.screenAllowed.delete(peer.id);
     broadcast(r, { t: 'peer-left', id: peer.id }, peer.id);
     pushWaiting(r);
-    if (peer.kind === 'camera' && peer.cameraSessionId) db.prepare('UPDATE camera_sessions SET ended_at=? WHERE id=?').run(now(), peer.cameraSessionId);
-    if (peer.kind === 'camera') addEvent(r, 'secondary_camera_disconnected', null);
-    if (peer.kind === 'candidate') addEvent(r, 'candidate_left', peer.name);
-    if (!r.peers.size) { persistCode(r, true); docs.get(r)?.forEach(d => d.destroy()); docs.delete(r); rooms.delete(r.id); }
-  });
+    const empty = !r.peers.size;
+    if (empty) rooms.delete(r.id); // a reconnect from now on builds a fresh room from the saved snapshots
+    if (peer.kind === 'camera' && peer.cameraSessionId) await db.camera_sessions.set({ id: peer.cameraSessionId, company_id: r.companyId }, { ended_at: now() });
+    if (peer.kind === 'camera') await addEvent(r, 'secondary_camera_disconnected', null);
+    if (peer.kind === 'candidate') await addEvent(r, 'candidate_left', peer.name);
+    if (empty) { await persistCode(r, true); docs.get(r)?.forEach(d => d.destroy()); docs.delete(r); }
+  })().catch(e => console.error('[realtime] close handling failed', e)); });
 }
 
 const isStaff = (p: Peer) => p.kind === 'staff';
 const need = (c: boolean, msg = 'Not allowed') => { if (!c) throw Object.assign(new Error(msg), { code: 'forbidden' }); };
 
-function handle(r: Room, p: Peer, m: any) {
+async function handle(r: Room, p: Peer, m: any): Promise<void> {
   if (!p.admitted && !['ping'].includes(m.t)) return;
   switch (m.t) {
     case 'ping': return send(p, { t: 'pong' });
 
     case 'admit': {
-      need(isStaff(p)); const t = r.peers.get(m.peerId); if (t && !t.admitted) admit(r, t); return;
+      need(isStaff(p)); const t = r.peers.get(m.peerId); if (t && !t.admitted) await admit(r, t); return;
     }
     case 'deny': {
       need(isStaff(p)); const t = r.peers.get(m.peerId); if (t && !t.admitted) { send(t, { t: 'denied' }); t.ws.close(4403, 'Denied'); } return;
@@ -225,13 +240,13 @@ function handle(r: Room, p: Peer, m: any) {
     }
     case 'media': {
       p.media = { audio: !!m.audio, video: !!m.video, screen: !!m.screen, screenStreamId: m.screen ? String(m.screenStreamId || '') : undefined };
-      if (m.screen) addEvent(r, 'screen_share_started', p.name); else if (m.screenStopped) addEvent(r, 'screen_share_stopped', p.name);
+      if (m.screen) await addEvent(r, 'screen_share_started', p.name); else if (m.screenStopped) await addEvent(r, 'screen_share_stopped', p.name);
       return broadcast(r, { t: 'media', id: p.id, media: p.media }, p.id, x => visible(x, p));
     }
     case 'chat': {
       const text = String(m.text || '').trim().slice(0, 2000); if (!text) return;
       need(p.kind !== 'camera');
-      db.prepare('INSERT INTO chat_messages(id,company_id,interview_id,sender_name,sender_role,body,created_at) VALUES (?,?,?,?,?,?,?)').run(uid(), r.companyId, r.id, p.name, p.kind, text, now());
+      await db.chat_messages.insert({ company_id: r.companyId, interview_id: r.id, sender_name: p.name, sender_role: p.kind, body: text, created_at: now() });
       return broadcast(r, { t: 'chat', name: p.name, role: p.kind, text, at: now() }, undefined, x => x.kind !== 'camera');
     }
     case 'chat-file': {
@@ -252,33 +267,33 @@ function handle(r: Room, p: Peer, m: any) {
     /* ---- interview lifecycle (staff) ---- */
     case 'interview-start': {
       need(isStaff(p));
-      const iv = db.prepare('SELECT status FROM interviews WHERE id=?').get(r.id) as any;
+      const iv = await db.interviews.get({ id: r.id, company_id: r.companyId });
       if (iv.status === 'completed') throw new Error('Interview already ended');
       if (iv.status !== 'in_progress') {
-        db.prepare("UPDATE interviews SET status='in_progress', started_at=? WHERE id=?").run(now(), r.id);
-        addEvent(r, 'interview_started', null, p.userId);
+        await db.interviews.set({ id: r.id, company_id: r.companyId }, { status: 'in_progress', started_at: now() });
+        await addEvent(r, 'interview_started', null, p.userId);
         broadcast(r, { t: 'status', status: 'in_progress', startedAt: now() });
       }
       return;
     }
     case 'interview-end': {
       need(isStaff(p));
-      const iv = db.prepare('SELECT * FROM interviews WHERE id=?').get(r.id) as any;
+      const iv = await db.interviews.get({ id: r.id, company_id: r.companyId });
       if (iv.status === 'completed') return;
-      addEvent(r, 'interview_ended', null, p.userId);
+      await addEvent(r, 'interview_ended', null, p.userId);
       const end = now();
-      db.prepare("UPDATE interviews SET status='completed', ended_at=? WHERE id=?").run(end, r.id);
+      await db.interviews.set({ id: r.id, company_id: r.companyId }, { status: 'completed', ended_at: end });
       const mins = iv.started_at ? (new Date(end).getTime() - new Date(iv.started_at).getTime()) / 60000 : 0;
-      if (mins > 0) recordUsage(r.companyId, 'interview_minutes', Math.round(mins * 10) / 10, r.id);
-      db.prepare("UPDATE applications SET stage='Interview Completed', updated_at=? WHERE id=? AND stage IN ('Interview Scheduled','Shortlisted','Screening','Applied')").run(now(), iv.application_id);
-      logActivity(r.companyId, { applicationId: iv.application_id, actorId: p.userId, action: 'interview.completed', detail: iv.title });
-      for (const pp of db.prepare('SELECT user_id FROM interview_participants WHERE interview_id=?').all(r.id) as any[])
-        notify(r.companyId, pp.user_id, 'evaluation', `Submit your feedback: ${iv.title}`, 'The interview has ended. Your evaluation is pending.', `/interviews/${r.id}/feedback`, { email: true });
-      persistCode(r, true);
+      if (mins > 0) await recordUsage(r.companyId, 'interview_minutes', Math.round(mins * 10) / 10, r.id);
+      await db.applications.set({ id: iv.application_id, company_id: r.companyId, stage: { $in: ['Interview Scheduled', 'Shortlisted', 'Screening', 'Applied'] } }, { stage: 'Interview Completed', updated_at: now() });
+      await logActivity(r.companyId, { applicationId: iv.application_id, actorId: p.userId, action: 'interview.completed', detail: iv.title });
+      for (const pp of await db.interview_participants.list({ interview_id: r.id }))
+        await notify(r.companyId, pp.user_id, 'evaluation', `Submit your feedback: ${iv.title}`, 'The interview has ended. Your evaluation is pending.', `/interviews/${r.id}/feedback`, { email: true });
+      await persistCode(r, true);
       broadcast(r, { t: 'status', status: 'completed' });
       return;
     }
-    case 'pause': { need(isStaff(p)); r.paused = !!m.paused; addEvent(r, r.paused ? 'break_started' : 'break_ended', null, p.userId); return broadcast(r, { t: 'paused', paused: r.paused }); }
+    case 'pause': { need(isStaff(p)); r.paused = !!m.paused; await addEvent(r, r.paused ? 'break_started' : 'break_ended', null, p.userId); return broadcast(r, { t: 'paused', paused: r.paused }); }
     case 'marker': {
       need(isStaff(p));
       const allowed = ['introductions', 'technical_questions', 'coding_started', 'system_design', 'break', 'wrap_up', 'custom'];
@@ -291,7 +306,7 @@ function handle(r: Room, p: Peer, m: any) {
       need(p.kind === 'candidate' || p.kind === 'camera', 'Only the candidate can give consent');
       const kind = m.kind === 'secondary_camera' ? 'secondary_camera' : m.kind === 'secondary_recording' ? 'secondary_recording' : 'recording';
       const granted = !!m.granted;
-      db.prepare('INSERT INTO consent_records(id,company_id,interview_id,subject,kind,granted,notice_version,created_at) VALUES (?,?,?,?,?,?,?,?)').run(uid(), r.companyId, r.id, p.name, kind, +granted, 'v1', now());
+      await db.consent_records.insert({ company_id: r.companyId, interview_id: r.id, subject: p.name, kind, granted: +granted, notice_version: 'v1', ip: null, created_at: now() });
       if (kind === 'recording') r.consents.recording = granted;
       if (kind === 'secondary_camera') r.consents.secondaryCamera = granted;
       if (kind === 'recording' && !granted && r.recording.active) { r.recording = { active: false, paused: false, sources: [] }; broadcast(r, { t: 'recording', recording: r.recording, reason: 'Candidate withdrew consent' }); }
@@ -299,14 +314,14 @@ function handle(r: Room, p: Peer, m: any) {
     }
     case 'rec-state': {
       need(isStaff(p));
-      const cfg = j((db.prepare('SELECT config FROM interviews WHERE id=?').get(r.id) as any).config, {} as any);
+      const cfg = j((await db.interviews.get({ id: r.id, company_id: r.companyId }))?.config, {} as any);
       need(!!cfg.recording, 'Recording is not enabled for this interview');
       if (m.active) {
         need(r.consents.recording === true, 'The candidate has not consented to recording');
-        enforce(r.companyId, { feature: 'recording' });
+        await enforce(r.companyId, { feature: 'recording' });
       }
       r.recording = { active: !!m.active, paused: !!m.paused, sources: Array.isArray(m.sources) ? m.sources.map(String).slice(0, 4) : [] };
-      addEvent(r, m.active ? (m.paused ? 'recording_paused' : 'recording_started') : 'recording_stopped', null, p.userId);
+      await addEvent(r, m.active ? (m.paused ? 'recording_paused' : 'recording_started') : 'recording_stopped', null, p.userId);
       return broadcast(r, { t: 'recording', recording: r.recording });
     }
 
@@ -372,14 +387,14 @@ function handle(r: Room, p: Peer, m: any) {
     case 'code-permission': { need(isStaff(p)); r.codeEditAllowed = !!m.allow; return broadcast(r, { t: 'code-permission', allow: r.codeEditAllowed }); }
     case 'code-question': {
       need(isStaff(p));
-      const q = db.prepare('SELECT id,title,prompt,starter_code FROM coding_questions WHERE id=? AND company_id=?').get(m.questionId, r.companyId) as any;
+      const q = await db.coding_questions.get({ id: String(m.questionId || ''), company_id: r.companyId });
       need(!!q, 'Question not found');
       r.questionId = q.id;
       const lang = String(m.language || 'javascript');
       const starter = j(q.starter_code, {} as any)[lang];
       let starterUpdate: string | null = null;
       if (starter && m.applyStarter) { const fn = r.activeFile; if (!r.files[fn]) r.files[fn] = { content: '', language: lang, version: 0 }; r.files[fn].language = lang; starterUpdate = b64(setYText(r, fn, starter)); r.dirtyFiles.add(fn); }
-      addEvent(r, 'coding_started', q.title, p.userId);
+      await addEvent(r, 'coding_started', q.title, p.userId);
       broadcast(r, { t: 'code-question', question: { id: q.id, title: q.title, prompt: q.prompt }, files: r.files }, undefined, x => x.kind !== 'camera');
       if (starterUpdate) broadcast(r, { t: 'code-yjs', file: r.activeFile, update: starterUpdate }, undefined, x => x.kind !== 'camera');
       return;
@@ -390,11 +405,11 @@ function handle(r: Room, p: Peer, m: any) {
       const lang = file.language;
       void (async () => {
         try {
-          enforce(r.companyId, { feature: 'coding', metric: 'code_runs', limitKey: 'code_runs_per_month' });
+          await enforce(r.companyId, { feature: 'coding', metric: 'code_runs', limitKey: 'code_runs_per_month' });
           broadcast(r, { t: 'code-running', by: p.name }, undefined, x => x.kind !== 'camera');
           const res = await runCode(lang, file.content, String(m.stdin || '').slice(0, 10000), 5);
-          recordUsage(r.companyId, 'code_runs', 1, r.id); logExecution(r.companyId, r.id, lang, res);
-          db.prepare('INSERT INTO coding_submissions(id,company_id,interview_id,question_id,user_id,language,code,kind,created_at) VALUES (?,?,?,?,?,?,?,?,?)').run(uid(), r.companyId, r.id, null, p.userId ?? null, lang, file.content, 'run', now());
+          await recordUsage(r.companyId, 'code_runs', 1, r.id); await logExecution(r.companyId, r.id, lang, res);
+          await db.coding_submissions.insert({ company_id: r.companyId, interview_id: r.id, question_id: null, user_id: p.userId ?? null, language: lang, code: file.content, kind: 'run', created_at: now() });
           broadcast(r, { t: 'code-result', kind: 'run', by: p.name, result: res }, undefined, x => x.kind !== 'camera');
         } catch (e: any) { send(p, { t: 'error', message: e.message, code: e.code }); broadcast(r, { t: 'code-result', kind: 'run', by: p.name, result: { status: 'Error', ok: false, stdout: '', stderr: e.message, compileOutput: '', timeMs: null, memoryKb: null } }, undefined, x => x.kind !== 'camera'); }
       })();
@@ -406,19 +421,17 @@ function handle(r: Room, p: Peer, m: any) {
       const file = r.files[String(m.file || r.activeFile)]; need(!!file, 'File not found');
       void (async () => {
         try {
-          const cases = (db.prepare('SELECT COUNT(*) c FROM coding_test_cases WHERE question_id=? AND company_id=?').get(qid, r.companyId) as any).c;
-          enforce(r.companyId, { feature: 'coding', metric: 'code_runs', limitKey: 'code_runs_per_month', add: Math.max(1, cases) });
+          const cases = await db.coding_test_cases.count({ question_id: qid, company_id: r.companyId });
+          await enforce(r.companyId, { feature: 'coding', metric: 'code_runs', limitKey: 'code_runs_per_month', add: Math.max(1, cases) });
           broadcast(r, { t: 'code-running', by: p.name }, undefined, x => x.kind !== 'camera');
           const out = await runTests(r.companyId, qid!, file.language, file.content, { revealHidden: false });
-          recordUsage(r.companyId, 'code_runs', Math.max(1, cases), r.id);
-          const subId = uid();
-          db.prepare('INSERT INTO coding_submissions(id,company_id,interview_id,question_id,user_id,language,code,kind,passed,total,score,results,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')
-            .run(subId, r.companyId, r.id, qid, p.userId ?? null, file.language, file.content, 'submit', out.passed, out.total, out.score, JSON.stringify(out.outcomes), now());
+          await recordUsage(r.companyId, 'code_runs', Math.max(1, cases), r.id);
+          const subId = await db.coding_submissions.insert({ company_id: r.companyId, interview_id: r.id, question_id: qid, user_id: p.userId ?? null, language: file.language, code: file.content, kind: 'submit', passed: out.passed, total: out.total, score: out.score, results: JSON.stringify(out.outcomes), created_at: now() });
           // Candidates see public tests in detail; hidden only pass/fail. Staff see everything.
           const full = out.outcomes;
           const redacted = full.map(o => o.hidden ? { id: o.id, hidden: true, passed: o.passed, status: o.status, timeMs: o.timeMs } : o);
           for (const x of admitted(r)) if (x.kind !== 'camera') send(x, { t: 'code-result', kind: 'submit', by: p.name, result: { passed: out.passed, total: out.total, score: out.score, outcomes: isStaff(x) ? full : redacted }, submissionId: subId });
-          addEvent(r, 'code_submitted', `${out.passed}/${out.total} tests`, p.userId);
+          await addEvent(r, 'code_submitted', `${out.passed}/${out.total} tests`, p.userId);
         } catch (e: any) { send(p, { t: 'error', message: e.message, code: e.code }); }
       })();
       return;

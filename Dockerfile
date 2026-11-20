@@ -1,6 +1,8 @@
 # Single image: builds the React app and serves it from the API process.
 FROM node:20-bookworm-slim AS build
 WORKDIR /app
+# Don't download the embedded dev MongoDB binary into the image; production uses MONGODB_URI (Atlas).
+ENV MONGOMS_DISABLE_POSTINSTALL=1
 COPY package.json package-lock.json* ./
 COPY server/package.json server/
 COPY web/package.json web/
@@ -15,7 +17,7 @@ COPY --from=build /app /app
 WORKDIR /app/server
 RUN mkdir -p /data && chown -R node:node /data /app
 USER node
-ENV DB_PATH=/data/app.db STORAGE_DIR=/data PORT=4000
+ENV STORAGE_DIR=/data PORT=4000
 EXPOSE 4000
 # tsx runs the TypeScript sources directly (keeps the image simple).
 CMD ["npx", "tsx", "src/index.ts"]

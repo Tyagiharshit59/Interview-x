@@ -9,14 +9,12 @@ import { config } from './config.js';
 import { HttpError, clientIp } from './util.js';
 
 /* ---------------- audit ---------------- */
-export function audit(companyId: string | null, actor: { userId?: string; email?: string } | null, action: string, target?: string, req?: Request, detail?: any) {
-  db.prepare('INSERT INTO audit_logs(id,company_id,actor_id,actor_label,action,target,detail,ip,created_at) VALUES (?,?,?,?,?,?,?,?,?)')
-    .run(uid(), companyId, actor?.userId ?? null, actor?.email ?? null, action, target ?? null, detail ? JSON.stringify(detail) : null, req ? clientIp(req) : null, now());
+export async function audit(companyId: string | null, actor: { userId?: string; email?: string } | null, action: string, target?: string, req?: Request, detail?: any) {
+  await db.audit_logs.insert({ company_id: companyId, actor_id: actor?.userId ?? null, actor_label: actor?.email ?? null, action, target: target ?? null, detail: detail ? JSON.stringify(detail) : null, ip: req ? clientIp(req) : null, created_at: now() });
 }
 
-export function logActivity(companyId: string, a: { applicationId?: string; candidateId?: string; actorId?: string; action: string; detail?: string }) {
-  db.prepare('INSERT INTO activity(id,company_id,application_id,candidate_id,actor_id,action,detail,created_at) VALUES (?,?,?,?,?,?,?,?)')
-    .run(uid(), companyId, a.applicationId ?? null, a.candidateId ?? null, a.actorId ?? null, a.action, a.detail ?? null, now());
+export async function logActivity(companyId: string, a: { applicationId?: string; candidateId?: string; actorId?: string; action: string; detail?: string }) {
+  await db.activity.insert({ company_id: companyId, application_id: a.applicationId ?? null, candidate_id: a.candidateId ?? null, actor_id: a.actorId ?? null, action: a.action, detail: a.detail ?? null, created_at: now() });
 }
 
 /* ---------------- mail ---------------- */
@@ -26,28 +24,26 @@ if (config.smtp) {
 }
 export type MailAttachment = { filename: string; content: string; contentType: string };
 export async function sendMail(companyId: string | null, to: string, subject: string, body: string, attachments?: MailAttachment[]) {
-  const id = uid();
-  db.prepare('INSERT INTO email_outbox(id,company_id,to_email,subject,body,status,created_at) VALUES (?,?,?,?,?,?,?)').run(id, companyId, to, subject, body, 'queued', now());
+  const id = await db.email_outbox.insert({ company_id: companyId, to_email: to, subject, body, status: 'queued', created_at: now() });
   if (!transporter) {
-    db.prepare("UPDATE email_outbox SET status='logged', sent_at=? WHERE id=?").run(now(), id);
+    await db.email_outbox.set({ id }, { status: 'logged', sent_at: now() });
     if (!config.isProd) console.log(`\n[mail:dev] To: ${to}\n  Subject: ${subject}\n  ${body.replace(/\n/g, '\n  ')}\n`);
     return;
   }
   try {
     await transporter.sendMail({ from: config.mailFrom, to, subject, text: body, attachments: attachments?.map(a => ({ filename: a.filename, content: a.content, contentType: a.contentType })) });
-    db.prepare("UPDATE email_outbox SET status='sent', sent_at=? WHERE id=?").run(now(), id);
+    await db.email_outbox.set({ id }, { status: 'sent', sent_at: now() });
   } catch (e: any) {
-    db.prepare("UPDATE email_outbox SET status='failed', error=? WHERE id=?").run(String(e?.message || e), id);
+    await db.email_outbox.set({ id }, { status: 'failed', error: String(e?.message || e) });
   }
 }
 
 /* ---------------- notifications ---------------- */
-export function notify(companyId: string | null, userId: string, kind: string, title: string, body?: string, link?: string, opts: { email?: boolean } = {}) {
-  db.prepare('INSERT INTO notifications(id,company_id,user_id,kind,title,body,link,created_at) VALUES (?,?,?,?,?,?,?,?)')
-    .run(uid(), companyId, userId, kind, title, body ?? null, link ?? null, now());
+export async function notify(companyId: string | null, userId: string, kind: string, title: string, body?: string, link?: string, opts: { email?: boolean } = {}) {
+  await db.notifications.insert({ company_id: companyId, user_id: userId, kind, title, body: body ?? null, link: link ?? null, read_at: null, created_at: now() });
   if (opts.email) {
-    const u = db.prepare('SELECT email FROM users WHERE id=?').get(userId) as any;
-    const p = db.prepare('SELECT email_enabled FROM notification_prefs WHERE user_id=?').get(userId) as any;
+    const u = await db.users.get({ id: userId });
+    const p = await db.notification_prefs.get({ user_id: userId });
     if (u && (!p || p.email_enabled)) void sendMail(companyId, u.email, title, `${body ?? ''}\n${link ? config.appUrl + link : ''}`.trim());
   }
 }
@@ -59,12 +55,15 @@ export const DEFAULT_ENTITLEMENTS = {
 };
 export type Entitlements = typeof DEFAULT_ENTITLEMENTS;
 
-export function getSubscription(companyId: string) {
-  const s = db.prepare('SELECT s.*, p.name plan_name, p.code plan_code, p.entitlements, p.overage FROM subscriptions s JOIN plans p ON p.id=s.plan_id WHERE s.company_id=?').get(companyId) as any;
-  return s;
+/** Subscription merged with its plan (plan_name, plan_code, entitlements, overage), or null. */
+export async function getSubscription(companyId: string) {
+  const s = await db.subscriptions.get({ company_id: companyId });
+  if (!s) return null;
+  const p = await db.plans.get({ id: s.plan_id });
+  return { ...s, plan_name: p?.name, plan_code: p?.code, entitlements: p?.entitlements ?? '{}', overage: p?.overage ?? '{}' } as any;
 }
-export function getEntitlements(companyId: string): Entitlements & { _status: string; _active: boolean } {
-  const s = getSubscription(companyId);
+export async function getEntitlements(companyId: string): Promise<Entitlements & { _status: string; _active: boolean }> {
+  const s = await getSubscription(companyId);
   if (!s) return { ...DEFAULT_ENTITLEMENTS, interviews_per_month: 0, members: 1, _status: 'none', _active: false };
   let status = s.status;
   if (status === 'trialing' && s.trial_ends_at && new Date(s.trial_ends_at) < new Date()) status = 'expired';
@@ -74,41 +73,38 @@ export function getEntitlements(companyId: string): Entitlements & { _status: st
   return { ...base, _status: status, _active: active };
 }
 
-export function periodStart(companyId: string) {
-  const s = getSubscription(companyId);
-  return s?.current_period_start || new Date(Date.now() - 30 * 864e5).toISOString();
+export async function periodStart(companyId: string) {
+  const s = await getSubscription(companyId);
+  return (s?.current_period_start as string) || new Date(Date.now() - 30 * 864e5).toISOString();
 }
-export const hooks: { usage?: (companyId: string, metric: string) => void } = {};
-export function recordUsage(companyId: string, metric: string, quantity = 1, refId?: string) {
-  db.prepare('INSERT INTO usage_records(id,company_id,metric,quantity,ref_id,created_at) VALUES (?,?,?,?,?,?)').run(uid(), companyId, metric, quantity, refId ?? null, now());
-  hooks.usage?.(companyId, metric);
+export const hooks: { usage?: (companyId: string, metric: string) => Promise<void> | void } = {};
+export async function recordUsage(companyId: string, metric: string, quantity = 1, refId?: string) {
+  await db.usage_records.insert({ company_id: companyId, metric, quantity, ref_id: refId ?? null, created_at: now() });
+  await hooks.usage?.(companyId, metric);
 }
-export function usageTotal(companyId: string, metric: string) {
-  const r = db.prepare('SELECT COALESCE(SUM(quantity),0) t FROM usage_records WHERE company_id=? AND metric=? AND created_at>=?').get(companyId, metric, periodStart(companyId)) as any;
-  return r.t as number;
+export async function usageTotal(companyId: string, metric: string) {
+  return db.usage_records.sum('quantity', { company_id: companyId, metric, created_at: { $gte: await periodStart(companyId) } });
 }
-export function usageSummary(companyId: string) {
-  const e = getEntitlements(companyId) as any;
+export async function usageSummary(companyId: string) {
+  const e = (await getEntitlements(companyId)) as any;
   const metrics: Array<[string, string | null]> = [
     ['interviews', 'interviews_per_month'], ['interview_minutes', null], ['code_runs', 'code_runs_per_month'],
     ['ai_calls', 'ai_calls_per_month'], ['recording_mb', 'recording_storage_mb'],
   ];
-  const members = (db.prepare("SELECT COUNT(*) c FROM company_members WHERE company_id=? AND status='active'").get(companyId) as any).c;
-  return {
-    status: e._status,
-    members: { used: members, limit: e.members },
-    ...Object.fromEntries(metrics.map(([m, k]) => [m, { used: Math.round(usageTotal(companyId, m) * 10) / 10, limit: k ? e[k] : null }])),
-  };
+  const members = await db.company_members.count({ company_id: companyId, status: 'active' });
+  const used: Record<string, any> = {};
+  for (const [m, k] of metrics) used[m] = { used: Math.round((await usageTotal(companyId, m)) * 10) / 10, limit: k ? e[k] : null };
+  return { status: e._status, members: { used: members, limit: e.members }, ...used };
 }
 /** Throws 402 if the feature isn't in the plan or the monthly cap is hit. Limit <= 0 on a counted metric means "none included". */
-export function enforce(companyId: string, opts: { feature?: keyof Entitlements; metric?: string; limitKey?: keyof Entitlements; add?: number }) {
-  const e = getEntitlements(companyId);
+export async function enforce(companyId: string, opts: { feature?: keyof Entitlements; metric?: string; limitKey?: keyof Entitlements; add?: number }) {
+  const e = await getEntitlements(companyId);
   if (!e._active) throw new HttpError(402, 'Your subscription is not active. Please renew or upgrade to continue.', 'subscription_inactive');
   if (opts.feature && !e[opts.feature]) throw new HttpError(402, `This feature is not included in your plan (${String(opts.feature)}).`, 'feature_not_in_plan');
   if (opts.metric && opts.limitKey) {
     const limit = e[opts.limitKey] as number;
     if (limit !== -1) { // -1 = unlimited
-      const used = usageTotal(companyId, opts.metric);
+      const used = await usageTotal(companyId, opts.metric);
       if (used + (opts.add ?? 1) > limit) throw new HttpError(402, `Monthly limit reached for ${opts.metric} (${limit}). Upgrade your plan or buy an add-on.`, 'limit_reached', { used, limit });
     }
   }

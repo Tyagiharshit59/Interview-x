@@ -7,6 +7,9 @@ services:
     ports: ["4000:4000"]
     environment:
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+      # MongoDB Atlas connection string (database name defaults to intervuex)
+      MONGODB_URI: ${MONGODB_URI:?set MONGODB_URI}
+      MONGODB_DB: ${MONGODB_DB:-intervuex}
       APP_URL: ${APP_URL:-http://localhost:4000}
       SUPER_ADMIN_EMAIL: ${SUPER_ADMIN_EMAIL:-admin@intervuex.local}
       SUPER_ADMIN_PASSWORD: ${SUPER_ADMIN_PASSWORD:?set SUPER_ADMIN_PASSWORD}
@@ -26,7 +29,7 @@ services:
       RAZORPAY_KEY_SECRET: ${RAZORPAY_KEY_SECRET:-}
       RAZORPAY_WEBHOOK_SECRET: ${RAZORPAY_WEBHOOK_SECRET:-}
     volumes:
-      - appdata:/data
+      - appdata:/data   # uploaded resumes and recordings (the database lives in Atlas)
     restart: unless-stopped
 volumes:
   appdata:

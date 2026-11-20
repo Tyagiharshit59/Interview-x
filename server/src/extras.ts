@@ -58,41 +58,41 @@ const METRIC_LIMITS: Record<string, { key: string; label: string }> = {
   interviews: { key: 'interviews_per_month', label: 'interviews' }, code_runs: { key: 'code_runs_per_month', label: 'code runs' },
   ai_calls: { key: 'ai_calls_per_month', label: 'AI calls' }, recording_mb: { key: 'recording_storage_mb', label: 'recording storage (MB)' },
 };
-function once(cid: string, action: string, target: string) {
-  if (db.prepare('SELECT 1 FROM audit_logs WHERE company_id=? AND action=? AND target=?').get(cid, action, target)) return false;
-  db.prepare('INSERT INTO audit_logs(id,company_id,action,target,created_at) VALUES (?,?,?,?,?)').run(crypto.randomUUID(), cid, action, target, now());
+async function once(cid: string, action: string, target: string) {
+  if (await db.audit_logs.exists({ company_id: cid, action, target })) return false;
+  await db.audit_logs.insert({ company_id: cid, action, target, created_at: now() });
   return true;
 }
-const admins = (cid: string) => db.prepare("SELECT user_id FROM company_members WHERE company_id=? AND role IN ('owner','admin') AND status='active'").all(cid) as any[];
+const admins = (cid: string) => db.company_members.list({ company_id: cid, role: { $in: ['owner', 'admin'] }, status: 'active' });
 
 /** Emails owners/admins once per billing period when a metric crosses 80% and again at 100%. Never throws. */
-export function checkUsageWarnings(cid: string, metric: string) {
+export async function checkUsageWarnings(cid: string, metric: string) {
   try {
     const m = METRIC_LIMITS[metric]; if (!m) return;
-    const limit = (getEntitlements(cid) as any)[m.key] as number;
+    const limit = ((await getEntitlements(cid)) as any)[m.key] as number;
     if (!limit || limit <= 0) return;
-    const used = usageTotal(cid, metric);
+    const used = await usageTotal(cid, metric);
     const level = used >= limit ? 100 : used >= limit * 0.8 ? 80 : 0;
     if (!level) return;
-    if (!once(cid, 'usage_warning', `${metric}:${level}:${periodStart(cid)}`)) return;
-    for (const a of admins(cid)) notify(cid, a.user_id, 'billing', level === 100 ? `You have reached your ${m.label} limit` : `You have used 80% of your ${m.label}`,
+    if (!(await once(cid, 'usage_warning', `${metric}:${level}:${await periodStart(cid)}`))) return;
+    for (const a of await admins(cid)) await notify(cid, a.user_id, 'billing', level === 100 ? `You have reached your ${m.label} limit` : `You have used 80% of your ${m.label}`,
       `${Math.round(used)} of ${limit} ${m.label} used this billing period. ${level === 100 ? 'New usage is blocked until you upgrade or the period renews.' : 'Consider upgrading before you hit the limit.'}`, '/billing', { email: true });
   } catch (e) { console.error('[usage-warning]', e); }
 }
 
 /* ---------------- renewal & payment notices ---------------- */
 /** Called by the background job. Notices are sent once per billing period. No automatic charging happens: renewal is a new payment. */
-export function subscriptionNotices() {
-  for (const s of db.prepare("SELECT company_id FROM subscriptions WHERE status='active'").all() as any[]) {
-    const sub = getSubscription(s.company_id); if (!sub) continue;
+export async function subscriptionNotices() {
+  for (const s of await db.subscriptions.list({ status: 'active' })) {
+    const sub = await getSubscription(s.company_id); if (!sub) continue;
     const end = new Date(sub.current_period_end).getTime(); const days = (end - Date.now()) / 864e5;
     const stage = days < -3 ? 'overdue' : days < 0 ? 'expired' : days <= 7 ? 'renewal' : null;
     if (!stage || sub.cancel_at_period_end && stage === 'renewal') continue;
-    if (!once(s.company_id, 'billing_notice', `${stage}:${sub.current_period_end}`)) continue;
+    if (!(await once(s.company_id, 'billing_notice', `${stage}:${sub.current_period_end}`))) continue;
     const text = { renewal: ['Your subscription renews soon', `Your plan period ends ${new Date(end).toDateString()}. Pay the renewal invoice from Billing to avoid interruption. Renewal is not charged automatically.`],
       expired: ['Your subscription period has ended', 'You have a 3-day grace period. Renew from Billing to keep access.'],
       overdue: ['Your subscription is past due', 'Access will be restricted. Renew from Billing to restore full access.'] }[stage];
-    for (const a of admins(s.company_id)) notify(s.company_id, a.user_id, 'billing', text[0], text[1], '/billing', { email: true });
+    for (const a of await admins(s.company_id)) await notify(s.company_id, a.user_id, 'billing', text[0], text[1], '/billing', { email: true });
   }
 }
 

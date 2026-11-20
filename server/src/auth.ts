@@ -48,24 +48,24 @@ export function issueSession(res: Response, user: { id: string; session_version:
   });
 }
 
-export function authFromToken(token: string | undefined): Auth | null {
+export async function authFromToken(token: string | undefined): Promise<Auth | null> {
   if (!token) return null;
   let p: any;
   try { p = jwt.verify(token, config.jwtSecret); } catch { return null; }
-  const u = db.prepare('SELECT * FROM users WHERE id=?').get(p.sub) as any;
+  const u = await db.users.get({ id: p.sub });
   if (!u || u.session_version !== p.sv) return null;
   let role: Role | null = null;
   let cid: string | null = p.cid || null;
   if (cid) {
     if (u.is_super_admin && p.sup) {
-      const c = db.prepare('SELECT status FROM companies WHERE id=?').get(cid) as any;
+      const c = await db.companies.get({ id: cid });
       if (!c) return null;
       role = 'admin';
     } else {
-      const m = db.prepare(`SELECT m.role, c.status FROM company_members m JOIN companies c ON c.id=m.company_id
-        WHERE m.company_id=? AND m.user_id=? AND m.status='active'`).get(cid, u.id) as any;
-      if (!m) { cid = null; }
-      else if (m.status !== 'active') return null;
+      const m = await db.company_members.get({ company_id: cid, user_id: u.id, status: 'active' });
+      const co = m ? await db.companies.get({ id: cid }) : null;
+      if (!m || !co) { cid = null; }
+      else if (co.status !== 'active') return null;
       else role = m.role;
     }
   }
@@ -83,23 +83,27 @@ export function parseCookie(header: string | undefined, name: string) {
   }
 }
 
-export function requireAuth(req: Request, _res: Response, next: NextFunction) {
-  const a = authFromToken(req.cookies?.[COOKIE]);
-  if (!a) return next(new HttpError(401, 'Please sign in', 'unauthenticated'));
-  req.auth = a;
-  if (a.supportMode) {
-    if (req.method !== 'GET') return next(forbidden('Support sessions are read-only', 'support_readonly'));
-    audit(a.companyId, a, 'support.read', `${req.method} ${req.originalUrl}`, req);
-  }
-  next();
+export async function requireAuth(req: Request, _res: Response, next: NextFunction) {
+  try {
+    const a = await authFromToken(req.cookies?.[COOKIE]);
+    if (!a) return next(new HttpError(401, 'Please sign in', 'unauthenticated'));
+    req.auth = a;
+    if (a.supportMode) {
+      if (req.method !== 'GET') return next(forbidden('Support sessions are read-only', 'support_readonly'));
+      await audit(a.companyId, a, 'support.read', `${req.method} ${req.originalUrl}`, req);
+    }
+    next();
+  } catch (e) { next(e); }
 }
 
 /** Requires an authenticated user with an active company membership. Tenant id always comes from the session, never from the client. */
-export function requireTenant(req: Request, _res: Response, next: NextFunction) {
-  if (!req.auth?.companyId || !req.auth.role) return next(new HttpError(403, 'No active company selected', 'no_company'));
-  const c = db.prepare('SELECT status FROM companies WHERE id=?').get(req.auth.companyId) as any;
-  if (!c || c.status !== 'active') return next(new HttpError(403, 'This company account is suspended', 'suspended'));
-  next();
+export async function requireTenant(req: Request, _res: Response, next: NextFunction) {
+  try {
+    if (!req.auth?.companyId || !req.auth.role) return next(new HttpError(403, 'No active company selected', 'no_company'));
+    const c = await db.companies.get({ id: req.auth.companyId });
+    if (!c || c.status !== 'active') return next(new HttpError(403, 'This company account is suspended', 'suspended'));
+    next();
+  } catch (e) { next(e); }
 }
 
 export const requirePerm = (perm: Perm) => (req: Request, _res: Response, next: NextFunction) => {

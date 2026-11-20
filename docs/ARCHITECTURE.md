@@ -7,7 +7,7 @@ flowchart LR
   C[Candidate browser] -->|HTTPS + WS| W
   P[Candidate phone] -->|QR link| W
   W -->|REST /api, WebSocket /ws| A[API + realtime (Node/Express)]
-  A --> DB[(SQLite)]
+  A --> DB[(MongoDB Atlas)]
   A --> FS[(Files: resumes, recordings)]
   A -->|HTTP| J[Judge0 sandbox]
   A -->|HTTP| L[LLM provider (optional)]
@@ -63,7 +63,7 @@ Single container (API + static web) + persistent volume, behind a TLS proxy. Jud
 ## Scaling path
 | Need | Change |
 |------|--------|
-| >1 API instance | PostgreSQL; Redis pub/sub for room fan-out (or sticky sessions); move in-memory tickets to Redis |
+| >1 API instance | (MongoDB already supports it) Redis pub/sub for room fan-out (or sticky sessions); move in-memory tickets to Redis |
 | >6 participants / server-side recording | LiveKit SFU + egress; replace `useRoom` with the LiveKit client; remove client recording |
 | Object storage | S3/R2 adapter in `services.ts` (save/open/delete + presigned URLs) |
 | Concurrent code editing | ✅ Yjs over the existing WS channel (custom Monaco binding); add awareness for remote cursors |

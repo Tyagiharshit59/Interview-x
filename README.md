@@ -2,7 +2,7 @@
 
 Multi-tenant recruitment, live interview, collaborative coding, AI-assist and subscription platform, built from `Interview_SaaS_Master_Prompt.pdf`. "IntervueX" is a placeholder name.
 
-**Stack:** React + TypeScript + Vite + Monaco (web) · Node.js + Express + TypeScript (API) · SQLite via better-sqlite3 · WebSockets + WebRTC · Judge0 (code execution) · Razorpay (payments).
+**Stack:** React + TypeScript + Vite + Monaco (web) · Node.js + Express + TypeScript (API) · MongoDB (Atlas in production; embedded mongod in development) · WebSockets + WebRTC · Judge0 (code execution) · Razorpay (payments).
 
 > Read [docs/STATUS.md](docs/STATUS.md) first. It lists exactly what works, what needs an external service, and what is not built yet.
 
@@ -13,7 +13,7 @@ Requires Node 20+.
 ```bash
 npm install
 cp .env.example server/.env        # optional; sensible dev defaults exist
-npm run dev                         # API on :4000, web on :5173
+npm run dev                         # API on :4000, web on :5173 (first start downloads an embedded MongoDB, ~600 MB, once)
 ```
 
 Open http://localhost:5173 and **Start free trial** to create a company. A 14-day Professional trial is created automatically.
@@ -37,8 +37,13 @@ npm test            # 10 end-to-end API tests on a throwaway database (tenant is
 npm run build       # production web build into web/dist (served by the API)
 ```
 
+## Database (MongoDB)
+* **Development/tests:** leave `MONGODB_URI` empty; an embedded MongoDB runs inside the API and stores data in `storage/mongo-data`.
+* **Production:** create a MongoDB Atlas cluster, allow your server's IP in Atlas *Network Access*, create a database user, and set `MONGODB_URI=mongodb+srv://USER:PASSWORD@cluster.../?retryWrites=true&w=majority` (and optionally `MONGODB_DB`). The API refuses to start in production without it. Indexes are created automatically on start.
+* **Existing SQLite data:** `cd server && MONGODB_URI=... npm run import:sqlite -- ../storage/app.db` (refuses to overwrite a non-empty database unless `--force`). Copy `storage/files` to the new server as well.
+
 ## Production
-`docker compose up --build` runs a single image (API + built web). Put it behind a TLS reverse proxy. Set `JWT_SECRET`, `SUPER_ADMIN_PASSWORD`, SMTP, TURN (`ICE_SERVERS`), Judge0 and Razorpay variables (see `.env.example`). Back up the `/data` volume (database, resumes, recordings). The Docker image has not been built in this repository's CI yet; treat the first build as part of your validation.
+`docker compose up --build` runs a single image (API + built web). Put it behind a TLS reverse proxy. Set `JWT_SECRET`, `SUPER_ADMIN_PASSWORD`, SMTP, TURN (`ICE_SERVERS`), Judge0 and Razorpay variables (see `.env.example`). Back up the `/data` volume (resumes, recordings) and enable Atlas backups for the database. The Docker image has not been built in this repository's CI yet; treat the first build as part of your validation.
 
 ## Layout
 ```

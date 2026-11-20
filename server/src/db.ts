@@ -1,228 +1,128 @@
-import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { MongoClient, type Db, type ClientSession, type Document } from 'mongodb';
 import { config } from './config.js';
 import { runMigrations } from './migrations/index.js';
 
-fs.mkdirSync(path.dirname(config.dbPath), { recursive: true });
-export const db = new Database(config.dbPath);
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
-
 export const uid = () => crypto.randomUUID();
 export const now = () => new Date().toISOString();
-
-/**
- * Tenant-owned tables carry company_id and EVERY query on them must filter by it.
- * Platform-level tables: users (global identity), plans, coupons, feature_flags, announcements, webhook_events.
- */
-const SCHEMA = `
-CREATE TABLE IF NOT EXISTS users (
-  id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, name TEXT NOT NULL,
-  is_super_admin INTEGER NOT NULL DEFAULT 0, email_verified INTEGER NOT NULL DEFAULT 0,
-  mfa_secret TEXT, mfa_enabled INTEGER NOT NULL DEFAULT 0,
-  failed_logins INTEGER NOT NULL DEFAULT 0, locked_until TEXT,
-  session_version INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS user_tokens (
-  token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  purpose TEXT NOT NULL, expires_at TEXT NOT NULL, used_at TEXT, payload TEXT
-);
-CREATE TABLE IF NOT EXISTS plans (
-  id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL, description TEXT,
-  price_monthly INTEGER NOT NULL, price_yearly INTEGER NOT NULL, currency TEXT NOT NULL DEFAULT 'INR',
-  entitlements TEXT NOT NULL, overage TEXT NOT NULL DEFAULT '{}', is_public INTEGER NOT NULL DEFAULT 1,
-  is_active INTEGER NOT NULL DEFAULT 1, sort_order INTEGER NOT NULL DEFAULT 0, trial_days INTEGER NOT NULL DEFAULT 14
-);
-CREATE TABLE IF NOT EXISTS companies (
-  id TEXT PRIMARY KEY, name TEXT NOT NULL, slug TEXT NOT NULL UNIQUE, website TEXT, industry TEXT, size TEXT,
-  gst_number TEXT, billing_address TEXT, state TEXT, status TEXT NOT NULL DEFAULT 'active',
-  settings TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS company_members (
-  id TEXT PRIMARY KEY, company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, role TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL, UNIQUE(company_id, user_id)
-);
-CREATE TABLE IF NOT EXISTS member_invites (
-  id TEXT PRIMARY KEY, company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-  email TEXT NOT NULL, role TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE, invited_by TEXT NOT NULL,
-  expires_at TEXT NOT NULL, accepted_at TEXT, created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS subscriptions (
-  id TEXT PRIMARY KEY, company_id TEXT NOT NULL UNIQUE REFERENCES companies(id) ON DELETE CASCADE,
-  plan_id TEXT NOT NULL REFERENCES plans(id), status TEXT NOT NULL, billing_cycle TEXT NOT NULL DEFAULT 'monthly',
-  trial_ends_at TEXT, current_period_start TEXT NOT NULL, current_period_end TEXT NOT NULL,
-  cancel_at_period_end INTEGER NOT NULL DEFAULT 0, custom_entitlements TEXT, coupon_code TEXT,
-  gateway TEXT, gateway_ref TEXT, created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS coupons (
-  code TEXT PRIMARY KEY, percent_off INTEGER NOT NULL, max_redemptions INTEGER, redeemed INTEGER NOT NULL DEFAULT 0,
-  expires_at TEXT, is_active INTEGER NOT NULL DEFAULT 1
-);
-CREATE TABLE IF NOT EXISTS invoices (
-  id TEXT PRIMARY KEY, company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-  number TEXT NOT NULL UNIQUE, description TEXT NOT NULL, plan_id TEXT, billing_cycle TEXT,
-  subtotal INTEGER NOT NULL, discount INTEGER NOT NULL DEFAULT 0,
-  cgst INTEGER NOT NULL DEFAULT 0, sgst INTEGER NOT NULL DEFAULT 0, igst INTEGER NOT NULL DEFAULT 0, total INTEGER NOT NULL,
-  currency TEXT NOT NULL DEFAULT 'INR', status TEXT NOT NULL, gateway TEXT, gateway_ref TEXT UNIQUE,
-  billing_snapshot TEXT, coupon_code TEXT, issued_at TEXT NOT NULL, paid_at TEXT
-);
-CREATE TABLE IF NOT EXISTS webhook_events (id TEXT PRIMARY KEY, provider TEXT NOT NULL, received_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS usage_records (
-  id TEXT PRIMARY KEY, company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-  metric TEXT NOT NULL, quantity REAL NOT NULL, ref_id TEXT, created_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_usage_company_metric ON usage_records(company_id, metric, created_at);
-CREATE TABLE IF NOT EXISTS jobs (
-  id TEXT PRIMARY KEY, company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-  title TEXT NOT NULL, department TEXT, location TEXT, employment_type TEXT, exp_min INTEGER, exp_max INTEGER,
-  description TEXT, responsibilities TEXT, required_skills TEXT NOT NULL DEFAULT '[]', preferred_skills TEXT NOT NULL DEFAULT '[]',
-  qualifications TEXT, screening_questions TEXT NOT NULL DEFAULT '[]', status TEXT NOT NULL DEFAULT 'draft',
-  is_template INTEGER NOT NULL DEFAULT 0, recruiter_id TEXT, interviewer_ids TEXT NOT NULL DEFAULT '[]',
-  created_by TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_jobs_company ON jobs(company_id, status);
-CREATE TABLE IF NOT EXISTS candidates (
-  id TEXT PRIMARY KEY, company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-  name TEXT NOT NULL, email TEXT NOT NULL, phone TEXT, current_title TEXT, current_company TEXT, location TEXT,
-  experience_years REAL, skills TEXT NOT NULL DEFAULT '[]', tags TEXT NOT NULL DEFAULT '[]', source TEXT,
-  created_by TEXT, created_at TEXT NOT NULL, UNIQUE(company_id, email)
-);
-CREATE TABLE IF NOT EXISTS candidate_resumes (
-  id TEXT PRIMARY KEY, company_id TEXT NOT NULL, candidate_id TEXT NOT NULL REFERENCES candidates(id) ON DELETE CASCADE,
-  file_key TEXT NOT NULL, original_name TEXT NOT NULL, mime TEXT NOT NULL, size INTEGER NOT NULL,
-  parsed_text TEXT, uploaded_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS applications (
-  id TEXT PRIMARY KEY, company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-  job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE, candidate_id TEXT NOT NULL REFERENCES candidates(id) ON DELETE CASCADE,
-  stage TEXT NOT NULL DEFAULT 'Applied', match_score INTEGER, match_detail TEXT, decision TEXT, decision_by TEXT, decision_note TEXT,
-  created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(job_id, candidate_id)
-);
-CREATE INDEX IF NOT EXISTS idx_app_company ON applications(company_id, stage);
-CREATE TABLE IF NOT EXISTS application_notes (
-  id TEXT PRIMARY KEY, company_id TEXT NOT NULL, application_id TEXT NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
-  author_id TEXT NOT NULL, body TEXT NOT NULL, created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS activity (
-  id TEXT PRIMARY KEY, company_id TEXT NOT NULL, application_id TEXT, candidate_id TEXT, actor_id TEXT, action TEXT NOT NULL, detail TEXT, created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS interviews (
-  id TEXT PRIMARY KEY, company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-  application_id TEXT NOT NULL REFERENCES applications(id) ON DELETE CASCADE, round_no INTEGER NOT NULL DEFAULT 1,
-  title TEXT NOT NULL, type TEXT NOT NULL DEFAULT 'technical', scheduled_at TEXT NOT NULL, duration_min INTEGER NOT NULL DEFAULT 60,
-  timezone TEXT NOT NULL DEFAULT 'UTC', instructions TEXT, status TEXT NOT NULL DEFAULT 'scheduled',
-  config TEXT NOT NULL DEFAULT '{}', created_by TEXT, created_at TEXT NOT NULL, started_at TEXT, ended_at TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_int_company ON interviews(company_id, scheduled_at);
-CREATE TABLE IF NOT EXISTS interview_participants (
-  id TEXT PRIMARY KEY, company_id TEXT NOT NULL, interview_id TEXT NOT NULL REFERENCES interviews(id) ON DELETE CASCADE,
-  user_id TEXT NOT NULL REFERENCES users(id), role TEXT NOT NULL DEFAULT 'interviewer', UNIQUE(interview_id, user_id)
-);
-CREATE TABLE IF NOT EXISTS interview_invitations (
-  id TEXT PRIMARY KEY, company_id TEXT NOT NULL, interview_id TEXT NOT NULL REFERENCES interviews(id) ON DELETE CASCADE,
-  token_hash TEXT NOT NULL UNIQUE, expires_at TEXT NOT NULL, revoked_at TEXT, last_used_at TEXT, created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS camera_sessions (
-  id TEXT PRIMARY KEY, company_id TEXT NOT NULL, interview_id TEXT NOT NULL REFERENCES interviews(id) ON DELETE CASCADE,
-  token_hash TEXT NOT NULL UNIQUE, expires_at TEXT NOT NULL, claimed_at TEXT, ended_at TEXT, created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS consent_records (
-  id TEXT PRIMARY KEY, company_id TEXT NOT NULL, interview_id TEXT NOT NULL, subject TEXT NOT NULL,
-  kind TEXT NOT NULL, granted INTEGER NOT NULL, notice_version TEXT NOT NULL, ip TEXT, created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS interview_recordings (
-  id TEXT PRIMARY KEY, company_id TEXT NOT NULL, interview_id TEXT NOT NULL REFERENCES interviews(id) ON DELETE CASCADE,
-  source TEXT NOT NULL, file_key TEXT, mime TEXT, size INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'recording',
-  started_by TEXT, retain_until TEXT, created_at TEXT NOT NULL, completed_at TEXT
-);
-CREATE TABLE IF NOT EXISTS recording_events (
-  id TEXT PRIMARY KEY, company_id TEXT NOT NULL, interview_id TEXT NOT NULL REFERENCES interviews(id) ON DELETE CASCADE,
-  kind TEXT NOT NULL, label TEXT, offset_sec REAL NOT NULL DEFAULT 0, author_id TEXT, created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS chat_messages (
-  id TEXT PRIMARY KEY, company_id TEXT NOT NULL, interview_id TEXT NOT NULL REFERENCES interviews(id) ON DELETE CASCADE,
-  sender_name TEXT NOT NULL, sender_role TEXT NOT NULL, body TEXT NOT NULL, created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS coding_questions (
-  id TEXT PRIMARY KEY, company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-  title TEXT NOT NULL, prompt TEXT NOT NULL, difficulty TEXT NOT NULL DEFAULT 'medium', category TEXT, languages TEXT NOT NULL DEFAULT '[]',
-  starter_code TEXT NOT NULL DEFAULT '{}', time_limit_sec INTEGER NOT NULL DEFAULT 2, scoring_criteria TEXT, kind TEXT NOT NULL DEFAULT 'coding',
-  created_by TEXT, created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS coding_test_cases (
-  id TEXT PRIMARY KEY, company_id TEXT NOT NULL, question_id TEXT NOT NULL REFERENCES coding_questions(id) ON DELETE CASCADE,
-  input TEXT NOT NULL DEFAULT '', expected_output TEXT NOT NULL DEFAULT '', is_hidden INTEGER NOT NULL DEFAULT 0, weight INTEGER NOT NULL DEFAULT 1
-);
-CREATE TABLE IF NOT EXISTS coding_assessments (
-  id TEXT PRIMARY KEY, company_id TEXT NOT NULL, interview_id TEXT NOT NULL REFERENCES interviews(id) ON DELETE CASCADE,
-  question_id TEXT REFERENCES coding_questions(id), language TEXT NOT NULL DEFAULT 'javascript', created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS coding_submissions (
-  id TEXT PRIMARY KEY, company_id TEXT NOT NULL, interview_id TEXT NOT NULL REFERENCES interviews(id) ON DELETE CASCADE,
-  question_id TEXT, user_id TEXT, language TEXT NOT NULL, code TEXT NOT NULL, kind TEXT NOT NULL, passed INTEGER, total INTEGER,
-  score REAL, results TEXT, created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS coding_execution_logs (
-  id TEXT PRIMARY KEY, company_id TEXT NOT NULL, interview_id TEXT, language TEXT, status TEXT, time_ms REAL, memory_kb REAL, stdout TEXT, stderr TEXT, created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS code_snapshots (
-  id TEXT PRIMARY KEY, company_id TEXT NOT NULL, interview_id TEXT NOT NULL REFERENCES interviews(id) ON DELETE CASCADE,
-  file_name TEXT NOT NULL, language TEXT, content TEXT NOT NULL, author TEXT, created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS whiteboard_sessions (
-  id TEXT PRIMARY KEY, company_id TEXT NOT NULL, interview_id TEXT NOT NULL UNIQUE REFERENCES interviews(id) ON DELETE CASCADE,
-  data TEXT NOT NULL DEFAULT '[]', updated_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS evaluation_templates (
-  id TEXT PRIMARY KEY, company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE, name TEXT NOT NULL, criteria TEXT NOT NULL, created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS interview_feedback (
-  id TEXT PRIMARY KEY, company_id TEXT NOT NULL, interview_id TEXT NOT NULL REFERENCES interviews(id) ON DELETE CASCADE,
-  interviewer_id TEXT NOT NULL REFERENCES users(id), ratings TEXT NOT NULL DEFAULT '{}', evidence TEXT, private_notes TEXT,
-  recommendation TEXT, submitted INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-  UNIQUE(interview_id, interviewer_id)
-);
-CREATE TABLE IF NOT EXISTS interview_transcripts (
-  id TEXT PRIMARY KEY, company_id TEXT NOT NULL, interview_id TEXT NOT NULL REFERENCES interviews(id) ON DELETE CASCADE,
-  speaker TEXT, text TEXT NOT NULL, offset_sec REAL NOT NULL DEFAULT 0, source TEXT NOT NULL DEFAULT 'manual', created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS ai_reports (
-  id TEXT PRIMARY KEY, company_id TEXT NOT NULL, interview_id TEXT, job_id TEXT, kind TEXT NOT NULL, content TEXT NOT NULL,
-  provider TEXT NOT NULL, created_by TEXT, created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS notifications (
-  id TEXT PRIMARY KEY, company_id TEXT, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  kind TEXT NOT NULL, title TEXT NOT NULL, body TEXT, link TEXT, read_at TEXT, created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS notification_prefs (
-  user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, email_enabled INTEGER NOT NULL DEFAULT 1, reminders INTEGER NOT NULL DEFAULT 1
-);
-CREATE TABLE IF NOT EXISTS email_outbox (
-  id TEXT PRIMARY KEY, company_id TEXT, to_email TEXT NOT NULL, subject TEXT NOT NULL, body TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'queued', error TEXT, created_at TEXT NOT NULL, sent_at TEXT
-);
-CREATE TABLE IF NOT EXISTS integrations (
-  id TEXT PRIMARY KEY, company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE, kind TEXT NOT NULL, config TEXT NOT NULL DEFAULT '{}',
-  enabled INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, UNIQUE(company_id, kind)
-);
-CREATE TABLE IF NOT EXISTS feature_flags (key TEXT PRIMARY KEY, enabled INTEGER NOT NULL DEFAULT 0, description TEXT);
-CREATE TABLE IF NOT EXISTS announcements (id TEXT PRIMARY KEY, message TEXT NOT NULL, level TEXT NOT NULL DEFAULT 'info', active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS support_requests (
-  id TEXT PRIMARY KEY, company_id TEXT NOT NULL, user_id TEXT NOT NULL, subject TEXT NOT NULL, body TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'open', support_access_until TEXT, created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS audit_logs (
-  id TEXT PRIMARY KEY, company_id TEXT, actor_id TEXT, actor_label TEXT, action TEXT NOT NULL, target TEXT, detail TEXT, ip TEXT, created_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_audit_company ON audit_logs(company_id, created_at);
-`;
-db.exec(SCHEMA);
-runMigrations(db);
-
 export const j = <T = any>(s: string | null | undefined, fallback: T): T => {
   if (!s) return fallback;
   try { return JSON.parse(s) as T; } catch { return fallback; }
 };
+
+/**
+ * MongoDB data layer.
+ *
+ * Documents keep the shape the app has always used: a string `id` (stored as `_id`), snake_case fields, ISO-string timestamps,
+ * 0/1 flags and JSON-in-string fields (read with `j()`). Reads return `id`, never `_id`. Every collection is addressed as `db.<name>`.
+ *
+ * Multi-tenancy rule is unchanged: collections that hold tenant data carry `company_id` and EVERY query on them must filter by it.
+ * Platform-level collections: users (global identity), plans, coupons, features, plan_features, limit_definitions, plan_limits,
+ * feature_flags, announcements, webhook_events, internal_staff, schema_migrations.
+ */
+let uri = config.mongo.uri;
+let embedded: any = null;
+if (!uri) {
+  if (config.isProd) throw new Error('MONGODB_URI must be set in production (e.g. your MongoDB Atlas connection string)');
+  // Development/test convenience: a real mongod (replica set, so transactions work) started in-process and stored under storage/mongo-data.
+  const { MongoMemoryReplSet } = await import('mongodb-memory-server');
+  const dbPath = path.join(config.storageDir, 'mongo-data'); fs.mkdirSync(dbPath, { recursive: true });
+  embedded = await MongoMemoryReplSet.create({ replSet: { count: 1, storageEngine: 'wiredTiger', dbName: config.mongo.dbName }, instanceOpts: [{ dbPath, port: config.mongo.devPort || undefined, storageEngine: 'wiredTiger' }] });
+  uri = embedded.getUri();
+  if (!config.isTest) console.log(`[db] No MONGODB_URI set: using an embedded development MongoDB at ${dbPath}`);
+}
+export const client = new MongoClient(uri, { ignoreUndefined: true, maxPoolSize: 20 });
+await client.connect();
+export const raw: Db = client.db(config.mongo.dbName);
+export async function closeDb() { await client.close(); await embedded?.stop(); }
+
+const txStore = new AsyncLocalStorage<ClientSession>();
+/** Runs fn in a transaction. All `db.*` calls made inside (even through helpers) join it. Retries transient errors; rolls back on throw. Nested calls join the outer transaction. */
+export async function tx<T>(fn: () => Promise<T>): Promise<T> {
+  if (txStore.getStore()) return fn();
+  const session = client.startSession();
+  try { let out!: T; await session.withTransaction(async () => { out = await txStore.run(session, fn); }); return out; }
+  finally { await session.endSession(); }
+}
+export const isDuplicateKey = (e: any) => e?.code === 11000;
+
+type Filter = Record<string, any>;
+const mapF = (f: any): any => {
+  if (!f || typeof f !== 'object') return f;
+  if (Array.isArray(f)) return f.map(mapF);
+  const o: any = {};
+  for (const [k, v] of Object.entries(f)) { if (k === 'id') o._id = v; else if (k === '$and' || k === '$or' || k === '$nor') o[k] = (v as any[]).map(mapF); else o[k] = v; }
+  return o;
+};
+/** Monotonic insertion counter (like SQLite rowid). Stored as `_seq`, never returned; use `sort: { _seq: 1 }` to list in insertion order. */
+let seqN = 0; const nextSeq = () => Date.now() * 1000 + (seqN++ % 1000);
+const out = (d: any) => { if (!d) return d; const { _id, _seq, ...rest } = d; return { id: _id, ...rest }; };
+const sess = (extra: Document = {}) => { const s = txStore.getStore(); return s ? { session: s, ...extra } : extra; };
+
+export interface FindOpts { sort?: Record<string, 1 | -1>; limit?: number; skip?: number; projection?: Record<string, 0 | 1>; collation?: { locale: string; strength: number } }
+export const NOCASE = { locale: 'en', strength: 2 } as const;
+
+class Coll {
+  constructor(readonly name: string) {}
+  private get c() { return raw.collection(this.name); }
+  /** One document or null. Filter key `id` means the primary key. */
+  async get(filter: Filter, o: FindOpts = {}): Promise<any | null> { return out(await this.c.findOne(mapF(filter), sess({ sort: o.sort, projection: o.projection, collation: o.collation }) as any)); }
+  async list(filter: Filter = {}, o: FindOpts = {}): Promise<any[]> {
+    let cur = this.c.find(mapF(filter), sess({ projection: o.projection, collation: o.collation }) as any);
+    if (o.sort) cur = cur.sort(o.sort as any); if (o.skip) cur = cur.skip(o.skip); if (o.limit) cur = cur.limit(o.limit);
+    return (await cur.toArray()).map(out);
+  }
+  async exists(filter: Filter, o: FindOpts = {}) { return (await this.c.countDocuments(mapF(filter), sess({ limit: 1, collation: o.collation }) as any)) > 0; }
+  async count(filter: Filter = {}) { return this.c.countDocuments(mapF(filter), sess() as any); }
+  /** Inserts a document; `id` is generated when absent. Returns the id. Throws a duplicate-key error (see isDuplicateKey) on unique violations. */
+  async insert(doc: Filter): Promise<string> { const { id, ...rest } = doc; const _id = id ?? uid(); await this.c.insertOne({ _id, _seq: nextSeq(), ...rest } as any, sess() as any); return _id; }
+  async insertMany(docs: Filter[]) { if (!docs.length) return; await this.c.insertMany(docs.map(({ id, ...rest }) => ({ _id: id ?? uid(), _seq: nextSeq(), ...rest })) as any, sess() as any); }
+  /** $set on the first match. Returns how many documents matched (0 or 1). */
+  async set(filter: Filter, fields: Filter): Promise<number> { return (await this.c.updateOne(mapF(filter), { $set: fields }, sess() as any)).matchedCount; }
+  async setMany(filter: Filter, fields: Filter): Promise<number> { return (await this.c.updateMany(mapF(filter), { $set: fields }, sess() as any)).matchedCount; }
+  /** Raw update operators ($set, $inc, $unset...) on the first match, or all matches with many:true. */
+  async update(filter: Filter, ops: Document, o: { many?: boolean; upsert?: boolean } = {}): Promise<number> {
+    const r = o.many ? await this.c.updateMany(mapF(filter), ops, sess({ upsert: o.upsert }) as any) : await this.c.updateOne(mapF(filter), ops, sess({ upsert: o.upsert }) as any);
+    return r.matchedCount + (r.upsertedCount || 0);
+  }
+  async inc(filter: Filter, fields: Record<string, number>) { return this.update(filter, { $inc: fields }); }
+  /**
+   * Update-or-insert by an equality filter. Equality fields of the filter are written on insert automatically.
+   * `onInsert` fields are only written when the document is created (use for ids and created_at).
+   */
+  async upsert(filter: Filter, fields: Filter, onInsert: Filter = {}) {
+    const f = mapF(filter); const eq: Filter = {};
+    for (const [k, v] of Object.entries(f)) if (!k.startsWith('$') && (typeof v !== 'object' || v === null)) eq[k] = v;
+    const set = { ...fields }; const ins: Filter = { ...onInsert };
+    for (const k of Object.keys(eq)) { delete set[k]; delete ins[k]; }
+    for (const k of Object.keys(set)) delete ins[k];
+    if (ins.id !== undefined) { ins._id = ins.id; delete ins.id; }
+    ins._seq = nextSeq();
+    if (!eq._id && !ins._id) ins._id = uid();
+    const upd: Document = {}; if (Object.keys(set).length) upd.$set = set; if (Object.keys(ins).length) upd.$setOnInsert = ins;
+    await this.c.updateOne(f, upd, sess({ upsert: true }) as any);
+  }
+  async del(filter: Filter): Promise<number> { return (await this.c.deleteMany(mapF(filter), sess() as any)).deletedCount; }
+  async sum(field: string, filter: Filter = {}): Promise<number> { const r = await this.c.aggregate([{ $match: mapF(filter) }, { $group: { _id: null, t: { $sum: `$${field}` } } }], sess() as any).toArray(); return r[0]?.t ?? 0; }
+  async distinct(field: string, filter: Filter = {}) { return this.c.distinct(field, mapF(filter), sess() as any); }
+  /** Raw aggregation. Results are returned as-is (`_id` is the group key), not remapped. */
+  async aggregate(pipeline: Document[]): Promise<any[]> { return this.c.aggregate(pipeline, sess() as any).toArray(); }
+  /** Escape hatch to the native driver collection. */
+  get native() { return this.c; }
+}
+
+export const COLLECTIONS = [
+  'users', 'user_tokens', 'plans', 'companies', 'company_members', 'member_invites', 'subscriptions', 'coupons', 'invoices', 'webhook_events', 'usage_records',
+  'jobs', 'candidates', 'candidate_resumes', 'applications', 'application_notes', 'activity', 'interviews', 'interview_participants', 'interview_invitations',
+  'camera_sessions', 'consent_records', 'interview_recordings', 'recording_events', 'chat_messages', 'coding_questions', 'coding_test_cases', 'coding_assessments',
+  'coding_submissions', 'coding_execution_logs', 'code_snapshots', 'whiteboard_sessions', 'evaluation_templates', 'interview_feedback', 'interview_transcripts',
+  'ai_reports', 'notifications', 'notification_prefs', 'email_outbox', 'integrations', 'feature_flags', 'announcements', 'support_requests', 'audit_logs',
+  'features', 'plan_features', 'company_feature_overrides', 'temporary_feature_grants', 'limit_definitions', 'plan_limits', 'company_limit_overrides', 'internal_staff', 'invitations', 'schema_migrations',
+] as const;
+type Name = typeof COLLECTIONS[number];
+export const db = Object.fromEntries(COLLECTIONS.map(n => [n, new Coll(n)])) as { [K in Name]: Coll };
+
+await runMigrations();

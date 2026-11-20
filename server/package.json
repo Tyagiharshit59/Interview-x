@@ -9,11 +9,11 @@
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "seed": "tsx src/seed.ts",
-    "test": "tsx --test test/api.test.ts test/migrations.test.ts"
+    "test": "tsx --test test/api.test.ts test/migrations.test.ts",
+    "import:sqlite": "tsx scripts/import-sqlite.ts"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
-    "better-sqlite3": "^11.5.0",
     "cookie-parser": "^1.4.7",
     "dotenv": "^16.4.5",
     "express": "^4.21.1",
@@ -21,6 +21,7 @@
     "helmet": "^8.0.0",
     "jsonwebtoken": "^9.0.2",
     "mammoth": "^1.8.0",
+    "mongodb": "^6.22.0",
     "multer": "^1.4.5-lts.1",
     "nodemailer": "^6.9.16",
     "pdf-parse": "^1.1.1",
@@ -42,7 +43,9 @@
     "@types/pdfkit": "^0.17.7",
     "@types/qrcode": "^1.5.5",
     "@types/ws": "^8.5.12",
+    "mongodb-memory-server": "^10.4.3",
     "tsx": "^4.19.2",
-    "typescript": "^5.6.3"
+    "typescript": "^5.6.3",
+    "better-sqlite3": "^11.5.0"
   }
 }

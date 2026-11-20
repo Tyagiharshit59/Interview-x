@@ -1,124 +1,121 @@
-import { test, before } from 'node:test';
+import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
 
-// Each test file runs in its own process, so this throwaway DB is isolated.
+// Each test file runs in its own process; this one gets its own embedded MongoDB in a throwaway directory.
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ivx-mig-'));
-process.env.DB_PATH = path.join(tmp, 'm.db'); process.env.STORAGE_DIR = tmp; process.env.NODE_ENV = 'test'; process.env.SUPER_ADMIN_PASSWORD = 'Test-Password-123!';
+process.env.STORAGE_DIR = tmp; process.env.NODE_ENV = 'test'; process.env.SUPER_ADMIN_PASSWORD = 'Test-Password-123!';
+delete process.env.MONGODB_URI;
 
-let db: any, ensureSeed: any, runMigrations: any, syncPlansFromLegacy: any, MIGRATIONS: any, FEATURES: any, CATEGORIES: any, LIMITS: any, uid: any, now: any;
+let db: any, raw: any, closeDb: any, ensureSeed: any, runMigrations: any, syncPlansFromLegacy: any, MIGRATIONS: any, FEATURES: any, CATEGORIES: any, LIMITS: any, now: any, isDuplicateKey: any;
 before(async () => {
-  ({ db, uid, now } = await import('../src/db.js'));
+  ({ db, raw, closeDb, now, isDuplicateKey } = await import('../src/db.js'));
   ({ ensureSeed } = await import('../src/seed.js'));
   ({ runMigrations, syncPlansFromLegacy, MIGRATIONS } = await import('../src/migrations/index.js'));
   ({ FEATURES, CATEGORIES, LIMITS } = await import('../src/migrations/catalog.js'));
-  ensureSeed();
+  await ensureSeed();
 });
+after(async () => { await closeDb(); });
 
-const tables = () => (db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as any[]).map(r => r.name);
-const plan = (code: string) => db.prepare('SELECT id FROM plans WHERE code=?').get(code) as any;
-const featuresOf = (code: string) => new Set((db.prepare('SELECT feature_key k FROM plan_features WHERE plan_id=?').all(plan(code).id) as any[]).map(r => r.k));
-const limitOf = (code: string, k: string) => (db.prepare('SELECT value FROM plan_limits WHERE plan_id=? AND limit_key=?').get(plan(code).id, k) as any).value;
-const mkCompany = (name: string) => { const id = uid(); db.prepare('INSERT INTO companies(id,name,slug,created_at) VALUES (?,?,?,?)').run(id, name, name.toLowerCase() + '-' + id.slice(0, 6), now()); return id; };
+const plan = async (code: string) => (await db.plans.get({ code })).id as string;
+const featuresOf = async (code: string) => new Set((await db.plan_features.list({ plan_id: await plan(code) })).map((r: any) => r.feature_key));
+const limitOf = async (code: string, k: string) => (await db.plan_limits.get({ plan_id: await plan(code), limit_key: k })).value;
+const mkCompany = async (name: string) => db.companies.insert({ name, slug: `${name.toLowerCase().replace(/\W+/g, '-')}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, status: 'active', settings: '{}', created_at: now() });
+/** Asserts the write fails with a duplicate key (11000) or document-validation (121) error. */
+async function rejects(p: Promise<any>, kind: 'duplicate' | 'validation') {
+  try { await p; } catch (e: any) { if (kind === 'duplicate') assert.ok(isDuplicateKey(e), `expected duplicate-key, got ${e?.code}`); else assert.equal(e?.code, 121, `expected validation error, got ${e?.code}`); return; }
+  assert.fail(`expected a ${kind} error`);
+}
 
-test('migrations are recorded, in order, once', () => {
-  const rows = db.prepare('SELECT version FROM schema_migrations ORDER BY version').all().map((r: any) => r.version);
+test('migrations are recorded, in order, once', async () => {
+  const rows = (await db.schema_migrations.list({}, { sort: { version: 1 } })).map((r: any) => r.version);
   assert.deepEqual(rows, MIGRATIONS.map((m: any) => m.version));
-  assert.deepEqual(runMigrations(db), [], 'a second run applies nothing');
+  assert.deepEqual(await runMigrations(), [], 'a second run applies nothing');
 });
 
-test('new tables exist and existing tables gained the provisioning columns', () => {
-  for (const t of ['features', 'plan_features', 'company_feature_overrides', 'temporary_feature_grants', 'limit_definitions', 'plan_limits', 'company_limit_overrides', 'internal_staff', 'invitations', 'schema_migrations'])
-    assert.ok(tables().includes(t), `missing table ${t}`);
-  const cols = (t: string) => (db.prepare(`PRAGMA table_info(${t})`).all() as any[]).map(c => c.name);
-  for (const c of ['email', 'contact_person', 'contact_phone', 'country', 'address', 'logo_key', 'employee_count', 'deactivated_at']) assert.ok(cols('companies').includes(c), `companies.${c}`);
-  for (const c of ['custom_price_monthly', 'custom_price_yearly', 'discount_percent', 'suspended_at']) assert.ok(cols('subscriptions').includes(c), `subscriptions.${c}`);
+test('unique indexes from the old schema exist', async () => {
+  const unique = async (c: string) => (await raw.collection(c).indexes()).filter((i: any) => i.unique).map((i: any) => Object.keys(i.key).join(','));
+  assert.ok((await unique('users')).includes('email'));
+  assert.ok((await unique('company_members')).includes('company_id,user_id'));
+  assert.ok((await unique('applications')).includes('job_id,candidate_id'));
+  assert.ok((await unique('interview_feedback')).includes('interview_id,interviewer_id'));
+  assert.ok((await unique('company_feature_overrides')).includes('company_id,feature_key'));
+  assert.ok((await unique('invitations')).includes('token_hash'));
 });
 
-test('feature catalog covers every category from the spec and marks unbuilt features', () => {
-  const rows = db.prepare('SELECT key, category, implemented FROM features').all() as any[];
+test('feature catalog covers every category from the spec and marks unbuilt features', async () => {
+  const rows = await db.features.list();
   assert.equal(rows.length, FEATURES.length);
-  assert.equal(new Set(rows.map(r => r.category)).size, CATEGORIES.length);
-  assert.equal(new Set(rows.map(r => r.key)).size, rows.length, 'keys are unique');
-  for (const k of ['company.team_management', 'coding.editor', 'live.recording', 'ai.questions', 'analytics.export', 'integrations.webhooks', 'security.sso']) assert.ok(rows.some(r => r.key === k), k);
-  assert.equal(rows.find(r => r.key === 'security.sso').implemented, 0, 'SSO is not built and must not be presented as available');
-  assert.equal(rows.find(r => r.key === 'live.recording').implemented, 1);
+  assert.equal(new Set(rows.map((r: any) => r.category)).size, CATEGORIES.length);
+  assert.equal(new Set(rows.map((r: any) => r.key)).size, rows.length, 'keys are unique');
+  for (const k of ['company.team_management', 'coding.editor', 'live.recording', 'ai.questions', 'analytics.export', 'integrations.webhooks', 'security.sso']) assert.ok(rows.some((r: any) => r.key === k), k);
+  assert.equal(rows.find((r: any) => r.key === 'security.sso').implemented, 0, 'SSO is not built and must not be presented as available');
+  assert.equal(rows.find((r: any) => r.key === 'live.recording').implemented, 1);
 });
 
-test('plans are backfilled from legacy entitlements: features and limits', () => {
-  assert.ok(featuresOf('professional').has('live.recording'));
-  assert.ok(!featuresOf('starter').has('live.recording'), 'starter has no recording');
-  assert.ok(!featuresOf('starter').has('ai.questions'));
-  assert.ok(featuresOf('professional').has('ai.questions'));
-  assert.ok(featuresOf('enterprise').has('security.sso'));
-  assert.ok(!featuresOf('professional').has('security.sso'));
-  assert.ok(featuresOf('starter').has('company.team_management'), 'core features are in every plan');
-  assert.equal(limitOf('starter', 'members'), 2);
-  assert.equal(limitOf('professional', 'interviews_per_month'), 100);
-  assert.equal(limitOf('enterprise', 'members'), -1);
-  assert.equal(limitOf('starter', 'active_jobs'), -1, 'limits without a legacy value default to unlimited so behaviour is unchanged');
-  assert.equal((db.prepare('SELECT COUNT(*) c FROM plan_limits WHERE plan_id=?').get(plan('starter').id) as any).c, LIMITS.length);
+test('plans are backfilled from legacy entitlements: features and limits', async () => {
+  assert.ok((await featuresOf('professional')).has('live.recording'));
+  assert.ok(!(await featuresOf('starter')).has('live.recording'), 'starter has no recording');
+  assert.ok(!(await featuresOf('starter')).has('ai.questions'));
+  assert.ok((await featuresOf('professional')).has('ai.questions'));
+  assert.ok((await featuresOf('enterprise')).has('security.sso'));
+  assert.ok(!(await featuresOf('professional')).has('security.sso'));
+  assert.ok((await featuresOf('starter')).has('company.team_management'), 'core features are in every plan');
+  assert.equal(await limitOf('starter', 'members'), 2);
+  assert.equal(await limitOf('professional', 'interviews_per_month'), 100);
+  assert.equal(await limitOf('enterprise', 'members'), -1);
+  assert.equal(await limitOf('starter', 'active_jobs'), -1, 'limits without a legacy value default to unlimited so behaviour is unchanged');
+  assert.equal(await db.plan_limits.count({ plan_id: await plan('starter') }), LIMITS.length);
 });
 
-test('re-syncing never overwrites what a Super Admin edited', () => {
-  const p = plan('professional').id;
-  db.prepare("DELETE FROM plan_features WHERE plan_id=? AND feature_key='live.recording'").run(p);
-  db.prepare("UPDATE plan_limits SET value=250 WHERE plan_id=? AND limit_key='interviews_per_month'").run(p);
-  syncPlansFromLegacy(db); runMigrations(db);
-  assert.ok(!featuresOf('professional').has('live.recording'), 'removed feature stays removed');
-  assert.equal(limitOf('professional', 'interviews_per_month'), 250);
+test('re-syncing never overwrites what a Super Admin edited', async () => {
+  const p = await plan('professional');
+  await db.plan_features.del({ plan_id: p, feature_key: 'live.recording' });
+  await db.plan_limits.set({ plan_id: p, limit_key: 'interviews_per_month' }, { value: 250 });
+  await syncPlansFromLegacy(); await runMigrations(); await ensureSeed();
+  assert.ok(!(await featuresOf('professional')).has('live.recording'), 'removed feature stays removed');
+  assert.equal(await limitOf('professional', 'interviews_per_month'), 250);
 });
 
-test('the seeded super admin is internal staff with the super_admin role', () => {
-  const r = db.prepare("SELECT s.role, s.status FROM internal_staff s JOIN users u ON u.id=s.user_id WHERE u.is_super_admin=1").get() as any;
-  assert.deepEqual({ ...r }, { role: 'super_admin', status: 'active' });
+test('the seeded super admin is internal staff with the super_admin role', async () => {
+  const u = await db.users.get({ is_super_admin: 1 });
+  const s = await db.internal_staff.get({ user_id: u.id });
+  assert.equal(s.role, 'super_admin'); assert.equal(s.status, 'active');
 });
 
-test('migration 2 is idempotent and backfills a super admin that pre-dates it', () => {
-  const id = uid();
-  db.prepare('INSERT INTO users(id,email,password_hash,name,is_super_admin,email_verified,created_at) VALUES (?,?,?,?,1,1,?)').run(id, 'old-admin@example.test', 'x', 'Old Admin', now());
-  assert.equal(db.prepare('SELECT 1 FROM internal_staff WHERE user_id=?').get(id), undefined);
-  db.transaction(() => MIGRATIONS[1].up(db))();
-  assert.equal((db.prepare('SELECT role FROM internal_staff WHERE user_id=?').get(id) as any).role, 'super_admin');
+test('migration 2 is idempotent and backfills a super admin that pre-dates it', async () => {
+  const id = await db.users.insert({ email: 'old-admin@example.test', password_hash: 'x', name: 'Old Admin', is_super_admin: 1, email_verified: 1, session_version: 0, created_at: now() });
+  assert.equal(await db.internal_staff.get({ user_id: id }), null);
+  await MIGRATIONS[1].up();
+  assert.equal((await db.internal_staff.get({ user_id: id })).role, 'super_admin');
+  assert.equal(await db.features.count(), FEATURES.length, 'catalog not duplicated');
 });
 
-test('constraints: overrides, grants, limits, staff roles and invitations', () => {
-  const c = mkCompany('Constraint Co');
-  const ins = (sql: string, ...a: any[]) => db.prepare(sql).run(...a);
-  // override: boolean only, must reference a real feature, one row per company+feature
-  ins('INSERT INTO company_feature_overrides(company_id,feature_key,enabled,created_at,updated_at) VALUES (?,?,?,?,?)', c, 'live.recording', 1, now(), now());
-  assert.throws(() => ins('INSERT INTO company_feature_overrides(company_id,feature_key,enabled,created_at,updated_at) VALUES (?,?,?,?,?)', c, 'live.recording', 0, now(), now()), /UNIQUE|PRIMARY/);
-  assert.throws(() => ins('INSERT INTO company_feature_overrides(company_id,feature_key,enabled,created_at,updated_at) VALUES (?,?,?,?,?)', c, 'live.chat', 2, now(), now()), /CHECK/);
-  assert.throws(() => ins('INSERT INTO company_feature_overrides(company_id,feature_key,enabled,created_at,updated_at) VALUES (?,?,?,?,?)', c, 'no.such_feature', 1, now(), now()), /FOREIGN KEY/);
-  // temporary grant: must end after it starts
+test('constraints: uniqueness and validators on overrides, grants, limits, staff roles and invitations', async () => {
+  const c = await mkCompany('Constraint Co');
   const t0 = new Date().toISOString(), t1 = new Date(Date.now() + 86400000).toISOString();
-  ins('INSERT INTO temporary_feature_grants(id,company_id,feature_key,starts_at,expires_at,created_at) VALUES (?,?,?,?,?,?)', uid(), c, 'ai.questions', t0, t1, now());
-  assert.throws(() => ins('INSERT INTO temporary_feature_grants(id,company_id,feature_key,starts_at,expires_at,created_at) VALUES (?,?,?,?,?,?)', uid(), c, 'ai.questions', t1, t0, now()), /CHECK/);
-  // limits: -1 (unlimited) allowed, below -1 not; key must be defined
-  ins('INSERT INTO company_limit_overrides(company_id,limit_key,value,updated_at) VALUES (?,?,?,?)', c, 'members', -1, now());
-  assert.throws(() => ins('INSERT INTO company_limit_overrides(company_id,limit_key,value,updated_at) VALUES (?,?,?,?)', c, 'candidates', -5, now()), /CHECK/);
-  assert.throws(() => ins('INSERT INTO company_limit_overrides(company_id,limit_key,value,updated_at) VALUES (?,?,?,?)', c, 'bogus', 1, now()), /FOREIGN KEY/);
-  // internal staff roles are a closed set
-  const u = uid(); ins('INSERT INTO users(id,email,password_hash,name,created_at) VALUES (?,?,?,?,?)', u, 'staff@example.test', 'x', 'Staff', now());
-  assert.throws(() => ins("INSERT INTO internal_staff(user_id,role,created_at) VALUES (?,'owner',?)", u, now()), /CHECK/);
-  for (const role of ['support_admin', 'billing_admin', 'platform_admin']) { ins('DELETE FROM internal_staff WHERE user_id=?', u); ins('INSERT INTO internal_staff(user_id,role,created_at) VALUES (?,?,?)', u, role, now()); }
-  // invitations: hashed token unique, purpose closed set
-  ins("INSERT INTO invitations(id,company_id,email,purpose,token_hash,expires_at,created_at) VALUES (?,?,?,'company_admin_activation',?,?,?)", uid(), c, 'a@x.test', 'hash-1', t1, now());
-  assert.throws(() => ins("INSERT INTO invitations(id,company_id,email,purpose,token_hash,expires_at,created_at) VALUES (?,?,?,'company_admin_activation',?,?,?)", uid(), c, 'b@x.test', 'hash-1', t1, now()), /UNIQUE/);
-  assert.throws(() => ins("INSERT INTO invitations(id,company_id,email,purpose,token_hash,expires_at,created_at) VALUES (?,?,?,'password_in_email',?,?,?)", uid(), c, 'b@x.test', 'hash-2', t1, now()), /CHECK/);
+  await db.company_feature_overrides.insert({ company_id: c, feature_key: 'live.recording', enabled: 1, created_at: now(), updated_at: now() });
+  await rejects(db.company_feature_overrides.insert({ company_id: c, feature_key: 'live.recording', enabled: 0, created_at: now(), updated_at: now() }), 'duplicate');
+  await rejects(db.company_feature_overrides.insert({ company_id: c, feature_key: 'live.chat', enabled: 2, created_at: now(), updated_at: now() }), 'validation');
+  await db.temporary_feature_grants.insert({ company_id: c, feature_key: 'ai.questions', starts_at: t0, expires_at: t1, created_at: now() });
+  await rejects(db.temporary_feature_grants.insert({ company_id: c, feature_key: 'ai.questions', starts_at: t1, expires_at: t0, created_at: now() }), 'validation');
+  await db.company_limit_overrides.insert({ company_id: c, limit_key: 'members', value: -1, updated_at: now() });
+  await rejects(db.company_limit_overrides.insert({ company_id: c, limit_key: 'candidates', value: -5, updated_at: now() }), 'validation');
+  const u = await db.users.insert({ email: 'staff@example.test', password_hash: 'x', name: 'Staff', created_at: now() });
+  await rejects(db.internal_staff.insert({ user_id: u, role: 'owner', created_at: now() }), 'validation');
+  for (const role of ['support_admin', 'billing_admin', 'platform_admin']) { await db.internal_staff.del({ user_id: u }); await db.internal_staff.insert({ user_id: u, role, status: 'active', created_at: now() }); }
+  await db.invitations.insert({ company_id: c, email: 'a@x.test', purpose: 'company_admin_activation', token_hash: 'hash-1', expires_at: t1, created_at: now() });
+  await rejects(db.invitations.insert({ company_id: c, email: 'b@x.test', purpose: 'company_admin_activation', token_hash: 'hash-1', expires_at: t1, created_at: now() }), 'duplicate');
+  await rejects(db.invitations.insert({ company_id: c, email: 'b@x.test', purpose: 'password_in_email', token_hash: 'hash-2', expires_at: t1, created_at: now() }), 'validation');
 });
 
-test('tenant-scoped rows are removed with their company, and never leak across companies', () => {
-  const a = mkCompany('Tenant A'), b = mkCompany('Tenant B');
-  const t1 = new Date(Date.now() + 86400000).toISOString();
-  for (const c of [a, b]) {
-    db.prepare('INSERT INTO company_feature_overrides(company_id,feature_key,enabled,created_at,updated_at) VALUES (?,?,1,?,?)').run(c, 'live.recording', now(), now());
-    db.prepare('INSERT INTO temporary_feature_grants(id,company_id,feature_key,starts_at,expires_at,created_at) VALUES (?,?,?,?,?,?)').run(uid(), c, 'ai.questions', now(), t1, now());
-    db.prepare('INSERT INTO company_limit_overrides(company_id,limit_key,value,updated_at) VALUES (?,?,?,?)').run(c, 'members', 5, now());
-  }
-  const count = (t: string, c: string) => (db.prepare(`SELECT COUNT(*) n FROM ${t} WHERE company_id=?`).get(c) as any).n;
-  db.prepare('DELETE FROM companies WHERE id=?').run(a);
-  for (const t of ['company_feature_overrides', 'temporary_feature_grants', 'company_limit_overrides']) { assert.equal(count(t, a), 0, `${t} cascades`); assert.equal(count(t, b), 1, `${t} for the other tenant is untouched`); }
+test('tenant-scoped records stay separate per company', async () => {
+  const a = await mkCompany('Tenant A'), b = await mkCompany('Tenant B');
+  await db.company_feature_overrides.insert({ company_id: a, feature_key: 'ai.questions', enabled: 1, created_at: now(), updated_at: now() });
+  await db.company_feature_overrides.insert({ company_id: b, feature_key: 'ai.questions', enabled: 0, created_at: now(), updated_at: now() });
+  assert.equal((await db.company_feature_overrides.get({ company_id: a, feature_key: 'ai.questions' })).enabled, 1);
+  assert.equal((await db.company_feature_overrides.get({ company_id: b, feature_key: 'ai.questions' })).enabled, 0);
+  assert.equal(await db.company_feature_overrides.count({ company_id: a }), 1);
 });

@@ -6,7 +6,7 @@ Status: **Phase 1 (inspection) and Phase 2 (schema + migrations + tests) are don
 
 | Concern | Current implementation |
 |---|---|
-| Stack | Express + TypeScript (tsx), better-sqlite3 (SQLite), React 18 + Vite. **Not** NestJS / PostgreSQL / TypeORM as the brief assumes. |
+| Stack | Express + TypeScript (tsx), **MongoDB** (official driver; Atlas in production), React 18 + Vite. **Not** NestJS / PostgreSQL / TypeORM as the brief assumes. |
 | Tenancy | `company_id` on every tenant table; tenant id comes only from the signed session (`req.auth.companyId`). Tested. |
 | Roles | Company roles `owner, admin, recruiter, interviewer, hiring_manager` (permission map in `auth.ts`). Candidates have no account; they use personal expiring links. Platform: one boolean `users.is_super_admin`. |
 | Super admin | `/api/admin/*` (`routes/admin.ts`): stats, companies list/detail, suspend, subscription change, plans CRUD, coupons, flags, announcements, invoices, support, audit, time-boxed read-only support sessions. Web console in `pages/Admin.tsx`. |
@@ -28,7 +28,7 @@ The brief says to explain before changing the database layer. **Recommendation: 
 
 ## Phase 2: schema (implemented)
 
-Versioned forward-only migrations live in `server/src/migrations/` and are tracked in `schema_migrations`. Version 1 is the baseline (`db.ts`); version 2 adds:
+Versioned forward-only migrations live in `server/src/migrations/` and are tracked in the `schema_migrations` collection. In MongoDB a migration creates indexes (unique constraints), installs collection validators (CHECK equivalents) and back-fills data; foreign keys are enforced in application code. Version 1 creates the baseline indexes; version 2 adds these collections:
 
 | Table | Purpose |
 |---|---|
@@ -55,7 +55,7 @@ npm run dev            # migrations run automatically on API start
 npm test               # api.test.ts (10) + migrations.test.ts (9)
 npm run typecheck
 ```
-There is no separate migrate command: `runMigrations()` runs at start and is idempotent. Back up `storage/app.db` before upgrading production.
+There is no separate migrate command: `runMigrations()` runs at start and is idempotent. Moving existing SQLite data: `cd server && MONGODB_URI=... npm run import:sqlite -- ../storage/app.db`.
 
 ## Remaining phases
 3 internal-staff auth and permissions · 4 company + first-admin provisioning with activation email · 5 plan and feature-catalog admin APIs · 6 entitlement resolver, overrides, temporary grants, enforcement · 7 usage limits for the new limits · 8-9 Super Admin UI (wizard, feature checkboxes) · 10 subscription admin, audit coverage, remaining tests.

@@ -90,9 +90,9 @@ const norm = (s: string) => s.replace(/\r/g, '').split('\n').map(l => l.trimEnd(
 export interface TestOutcome { id: string; hidden: boolean; passed: boolean; status: string; input?: string; expected?: string; actual?: string; timeMs: number | null }
 
 export async function runTests(companyId: string, questionId: string, language: string, code: string, opts: { revealHidden: boolean }) {
-  const q = db.prepare('SELECT * FROM coding_questions WHERE id=? AND company_id=?').get(questionId, companyId) as any;
+  const q = await db.coding_questions.get({ id: questionId, company_id: companyId });
   if (!q) throw new Error('Question not found');
-  const cases = db.prepare('SELECT * FROM coding_test_cases WHERE question_id=? AND company_id=? ORDER BY rowid').all(questionId, companyId) as any[];
+  const cases = await db.coding_test_cases.list({ question_id: questionId, company_id: companyId }, { sort: { _seq: 1 } });
   const outcomes: TestOutcome[] = [];
   let earned = 0, totalW = 0;
   for (const c of cases) {
@@ -108,8 +108,7 @@ export async function runTests(companyId: string, questionId: string, language: 
   return { outcomes, passed: outcomes.filter(o => o.passed).length, total: outcomes.length, score: totalW ? Math.round((earned / totalW) * 100) : 0 };
 }
 
-export function logExecution(companyId: string, interviewId: string | null, language: string, r: RunResult) {
-  db.prepare('INSERT INTO coding_execution_logs(id,company_id,interview_id,language,status,time_ms,memory_kb,stdout,stderr,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)')
-    .run(uid(), companyId, interviewId, language, r.status, r.timeMs, r.memoryKb, r.stdout.slice(0, 4000), (r.stderr + r.compileOutput).slice(0, 4000), now());
+export async function logExecution(companyId: string, interviewId: string | null, language: string, r: RunResult) {
+  await db.coding_execution_logs.insert({ company_id: companyId, interview_id: interviewId, language, status: r.status, time_ms: r.timeMs, memory_kb: r.memoryKb, stdout: r.stdout.slice(0, 4000), stderr: (r.stderr + r.compileOutput).slice(0, 4000), created_at: now() });
 }
 export { j };
