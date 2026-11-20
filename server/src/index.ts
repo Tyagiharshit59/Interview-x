@@ -22,6 +22,7 @@ import { billingRouter, webhookRouter } from './routes/billing.js';
 import { adminRouter } from './routes/admin.js';
 import { portalRouter, candidateUpdatesRouter } from './routes/portal.js';
 import { referralRouter } from './routes/referrals.js';
+import { logoRouter } from './branding.js';
 import { requireAuth as ra } from './auth.js';
 import { attachRealtime } from './realtime.js';
 import { sendMail, notify } from './services.js';
@@ -56,6 +57,7 @@ app.use('/api', (req, _res, next) => {
 
 app.get('/api/health', (_req, res) => res.json({ ok: true, time: now() }));
 app.use('/api/auth', authRouter);
+app.use('/api/public', logoRouter);
 app.use('/api/public', publicRouter);
 app.use('/api/portal', portalRouter);
 app.use('/api/files', filesRouter);

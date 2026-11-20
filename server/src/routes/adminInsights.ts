@@ -11,6 +11,7 @@ import { config } from '../config.js';
 import { createAccountToken } from './auth.js';
 import { seedStarterQuestions } from './coding.js';
 import { derivePrefix, PREFIX_RE } from '../jobcodes.js';
+import { logoUrl, themeOf, logoUpload, storeLogo, removeLogo, THEME_RE } from '../branding.js';
 
 export const insightsRouter = Router();
 
@@ -80,7 +81,7 @@ async function companyFacts() {
     return {
       c, s, plan, ent,
       row: {
-        id: c.id, name: c.name, slug: c.slug, status: c.status, created_at: c.created_at, industry: c.industry ?? null, country: c.country ?? null, tags: c.admin_tags ?? [],
+        id: c.id, name: c.name, slug: c.slug, logo: logoUrl(c), theme: themeOf(c), status: c.status, created_at: c.created_at, industry: c.industry ?? null, country: c.country ?? null, tags: c.admin_tags ?? [],
         plan: plan?.name ?? null, plan_code: plan?.code ?? null, sub_status: s?.status ?? null, trial_ends_at: s?.trial_ends_at ?? null, current_period_end: s?.current_period_end ?? null,
         team: memBy.get(c.id)?.team ?? 0, employees: memBy.get(c.id)?.employees ?? 0, jobs_open: jobBy.get(c.id)?.open ?? 0, jobs_total: jobBy.get(c.id)?.total ?? 0,
         candidates: candBy.get(c.id) ?? 0, interviews: ivBy.get(c.id) ?? 0, interviews_30d: ivRecent.filter(i => i.created_at >= since30).length,
@@ -125,7 +126,7 @@ insightsRouter.get('/overview', wrap(async (_req, res) => {
     },
     plan_mix: [...planMix.entries()].map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value),
     health: [...healthCount.entries()].map(([key, value]) => ({ key, label: rows.find(r => r.health.key === key)!.health.label, value })),
-    top_companies: [...rows].sort((a, b) => b.interviews_30d - a.interviews_30d || b.candidates - a.candidates).slice(0, 8).map(r => ({ id: r.id, name: r.name, interviews_30d: r.interviews_30d, candidates: r.candidates, plan: r.plan })),
+    top_companies: [...rows].sort((a, b) => b.interviews_30d - a.interviews_30d || b.candidates - a.candidates).slice(0, 8).map(r => ({ id: r.id, name: r.name, logo: r.logo, interviews_30d: r.interviews_30d, candidates: r.candidates, plan: r.plan })),
     attention: rows.filter(r => r.health.key !== 'healthy').sort((a, b) => ['billing', 'trial_ending', 'near_limit', 'suspended', 'inactive', 'no_plan'].indexOf(a.health.key) - ['billing', 'trial_ending', 'near_limit', 'suspended', 'inactive', 'no_plan'].indexOf(b.health.key)).slice(0, 12)
       .map(r => ({ id: r.id, name: r.name, health: r.health, plan: r.plan, trial_ends_at: r.trial_ends_at, current_period_end: r.current_period_end, usage: r.usage, last_activity: r.last_activity })),
   });
@@ -181,7 +182,7 @@ insightsRouter.get('/companies/:id/insights', wrap(async (req, res) => {
   const usage = (await usageSummary(cid)) as any;
   const ent = await getEntitlements(cid);
   res.json({
-    company: { ...c, settings: j(c.settings, {}), admin_notes: c.admin_notes ?? [], admin_tags: c.admin_tags ?? [] },
+    company: { ...c, settings: j(c.settings, {}), admin_notes: c.admin_notes ?? [], admin_tags: c.admin_tags ?? [], logoUrl: logoUrl(c), theme: themeOf(c) },
     subscription: s ? { ...s, custom_entitlements: j(s.custom_entitlements, {}), plan_name: plan?.name, plan_code: plan?.code, plan_price_monthly: plan?.price_monthly, plan_price_yearly: plan?.price_yearly } : null,
     entitlements: ent, usage, mrr: mrrOf(s, plan),
     health: healthOf(c, s, { interviews: usage.interviews?.used ?? 0, limit: usage.interviews?.limit ?? null }, last), last_activity: last,
@@ -214,15 +215,26 @@ insightsRouter.patch('/companies/:id', wrap(async (req, res) => {
     name: z.string().trim().min(2).max(100), website: z.string().trim().max(200).nullable(), industry: z.string().trim().max(80).nullable(), size: z.string().trim().max(40).nullable(),
     email: z.string().trim().max(200).nullable(), contact_person: z.string().trim().max(100).nullable(), contact_phone: z.string().trim().max(30).nullable(),
     country: z.string().trim().max(60).nullable(), state: z.string().trim().max(60).nullable(), address: z.string().trim().max(400).nullable(), gst_number: z.string().trim().max(20).nullable(),
-    admin_tags: z.array(z.string().trim().min(1).max(30)).max(12), jobCodePrefix: z.string().trim().toUpperCase().regex(PREFIX_RE),
+    admin_tags: z.array(z.string().trim().min(1).max(30)).max(12), jobCodePrefix: z.string().trim().toUpperCase().regex(PREFIX_RE), themeColor: z.string().regex(THEME_RE).nullable(),
   }).partial(), req.body);
   const c = await db.companies.get({ id: cid }); if (!c) throw notFound('Company not found');
-  const { jobCodePrefix, ...fields } = b as any;
+  const { jobCodePrefix, themeColor, ...fields } = b as any;
   const upd: any = { ...fields };
   for (const k of Object.keys(upd)) if (upd[k] === '') upd[k] = null;
-  if (jobCodePrefix) upd.settings = JSON.stringify({ ...j<any>(c.settings, {}), jobCodePrefix });
+  if (jobCodePrefix || themeColor !== undefined) upd.settings = JSON.stringify({ ...j<any>(c.settings, {}), ...(jobCodePrefix ? { jobCodePrefix } : {}), ...(themeColor !== undefined ? { themeColor } : {}) });
   await db.companies.set({ id: cid }, upd);
   await audit(cid, req.auth!, 'admin.company_updated', cid, req, Object.keys(b));
+  res.json({ ok: true });
+}));
+
+insightsRouter.post('/companies/:id/logo', logoUpload.single('file'), wrap(async (req, res) => {
+  const url = await storeLogo(String(req.params.id), req.file);
+  await audit(String(req.params.id), req.auth!, 'admin.company_logo_updated', String(req.params.id), req);
+  res.status(201).json({ logoUrl: url });
+}));
+insightsRouter.delete('/companies/:id/logo', wrap(async (req, res) => {
+  await removeLogo(String(req.params.id));
+  await audit(String(req.params.id), req.auth!, 'admin.company_logo_removed', String(req.params.id), req);
   res.json({ ok: true });
 }));
 

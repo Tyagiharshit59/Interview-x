@@ -501,6 +501,48 @@ test('platform console: overview, company table, insights, provisioning, notes, 
   assert.ok(text.includes("'=HYPERLINK") && !/(^|,)=HYPERLINK/m.test(text), 'formula is neutralised');
 });
 
+test('company branding: logo upload (raster only), public logo URL, theme colour', async () => {
+  const upload = async (c: Client, url: string, buf: Buffer, name: string, type: string) => {
+    const fd = new FormData(); fd.append('file', new Blob([buf], { type }), name);
+    const r = await fetch(BASE + url, { method: 'POST', body: fd, headers: { Cookie: c.cookie, Origin: 'http://localhost:5173' } });
+    let data: any = null; try { data = await r.json(); } catch { /* none */ } return { status: r.status, data };
+  };
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
+  const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>');
+  assert.equal((await upload(A, '/company/logo', svg, 'logo.svg', 'image/svg+xml')).status, 415, 'SVG is refused');
+  assert.equal((await upload(A, '/company/logo', Buffer.from('not an image at all'), 'logo.png', 'image/png')).status, 415, 'content is checked, not the file name');
+  const up = await upload(A, '/company/logo', png, 'logo.png', 'image/png');
+  assert.equal(up.status, 201); assert.match(up.data.logoUrl, /^\/api\/public\/logo\//);
+
+  // public, cacheable, correctly typed, no sniffing
+  const img = await fetch('http://localhost:' + PORT + up.data.logoUrl);
+  assert.equal(img.status, 200); assert.equal(img.headers.get('content-type'), 'image/png'); assert.equal(img.headers.get('x-content-type-options'), 'nosniff');
+  assert.deepEqual(Buffer.from(await img.arrayBuffer()), png);
+
+  // theme colour
+  assert.equal((await A.req('PATCH', '/company', { settings: { themeColor: 'red' } })).status, 422);
+  assert.equal((await A.req('PATCH', '/company', { settings: { themeColor: '#0E7490' } })).status, 200);
+  const me = await A.req('GET', '/auth/me');
+  assert.equal(me.data.company.settings.themeColor, '#0E7490'); assert.equal(me.data.company.logoUrl, up.data.logoUrl);
+  const co = await A.req('GET', '/company');
+  assert.equal(co.data.logo_key, undefined, 'storage paths are not exposed');
+
+  // the candidate portal shows the logo on this company's jobs
+  const P2 = new Client();
+  const cand = await A.req('POST', '/candidates', { name: 'Brand Viewer', email: 'brand-viewer@mail.test', invite_to_portal: true });
+  await P2.req('POST', `/portal/invite/${new URL(cand.data.portalInvite.devInviteUrl).searchParams.get('token')}`, { password: 'ViewerPassw0rd' });
+  const jobs = await P2.req('GET', '/portal/jobs');
+  const acmeJob = jobs.data.items.find((x: any) => x.company === 'Acme Corp');
+  assert.equal(acmeJob.company_logo, up.data.logoUrl);
+
+  // only managers can change branding; removal works
+  const H3 = new Client(); await H3.req('POST', '/auth/login', { email: 'hema@acme.test', password: 'HemaPassw0rd' });
+  assert.equal((await upload(H3, '/company/logo', png, 'logo.png', 'image/png')).status, 403);
+  assert.equal((await A.req('DELETE', '/company/logo')).status, 200);
+  assert.equal((await fetch('http://localhost:' + PORT + up.data.logoUrl)).status, 404);
+  assert.equal((await A.req('GET', '/auth/me')).data.company.logoUrl, null);
+});
+
 test('login lockout, password reset invalidates sessions, MFA', async () => {
   const C = new Client();
   for (let i = 0; i < 5; i++) assert.equal((await C.req('POST', '/auth/login', { email: 'bob@beta.test', password: 'wrong-pass1' })).status, 401);

@@ -133,3 +133,11 @@ export const statusBadge = (s: string | null | undefined) => {
   const m: Record<string, 'ok' | 'warn' | 'danger' | 'info' | undefined> = { scheduled: 'info', in_progress: 'warn', completed: 'ok', cancelled: 'danger', published: 'ok', draft: undefined, archived: undefined, active: 'ok', trialing: 'info', past_due: 'warn', expired: 'danger', paid: 'ok', pending: 'warn', failed: 'danger', ready: 'ok', suspended: 'danger' };
   return <Badge kind={m[s]}>{s.replace(/_/g, ' ')}</Badge>;
 };
+
+/** Company logo with a tasteful initial fallback. */
+export function CompanyLogo({ name, src, size = 40, className = '' }: { name: string; src?: string | null; size?: number; className?: string }) {
+  const [broken, setBroken] = useState(false);
+  const style = { width: size, height: size };
+  if (src && !broken) return <span className={`grid flex-none place-items-center overflow-hidden rounded-xl bg-white ring-1 ring-line ${className}`} style={style}><img src={src} alt={`${name} logo`} onError={() => setBroken(true)} className="h-full w-full object-contain p-1" /></span>;
+  return <span className={`grid flex-none place-items-center rounded-xl bg-gradient-to-br from-brand-500/15 to-gold-400/25 font-extrabold text-brand-700 ring-1 ring-brand-500/15 dark:text-brand-200 ${className}`} style={{ ...style, fontSize: Math.round(size * 0.4) }}>{(name || '?').slice(0, 1).toUpperCase()}</span>;
+}

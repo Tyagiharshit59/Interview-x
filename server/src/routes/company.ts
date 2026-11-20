@@ -7,14 +7,16 @@ import { createAccountToken } from './auth.js';
 import { companyPrefix, PREFIX_RE } from '../jobcodes.js';
 import { audit, sendMail, getEntitlements, usageSummary, notify } from '../services.js';
 import { config } from '../config.js';
+import { logoUpload, storeLogo, removeLogo, logoUrl, THEME_RE } from '../branding.js';
 
 export const companyRouter = Router();
 
 /* ---------- profile & settings ---------- */
 companyRouter.get('/company', wrap(async (req, res) => {
-  const c = await db.companies.get({ id: tenant(req) }, { projection: { name: 1, slug: 1, website: 1, industry: 1, size: 1, gst_number: 1, billing_address: 1, state: 1, settings: 1, job_seq: 1 } });
+  const c = await db.companies.get({ id: tenant(req) }, { projection: { name: 1, slug: 1, website: 1, industry: 1, size: 1, gst_number: 1, billing_address: 1, state: 1, settings: 1, job_seq: 1, logo_key: 1, logo_updated_at: 1 } });
   const prefix = await companyPrefix(tenant(req));
-  res.json({ ...c, settings: { ...j(c.settings, {}), jobCodePrefix: prefix }, nextJobCode: `${prefix}-${String((c.job_seq || 0) + 1).padStart(4, '0')}` });
+  const { logo_key: _lk, ...pub } = c; // never expose storage paths
+  res.json({ ...pub, logoUrl: logoUrl({ ...c, id: tenant(req) }), settings: { ...j(c.settings, {}), jobCodePrefix: prefix }, nextJobCode: `${prefix}-${String((c.job_seq || 0) + 1).padStart(4, '0')}` });
 }));
 
 companyRouter.patch('/company', requirePerm('company.manage'), wrap(async (req, res) => {
@@ -27,6 +29,7 @@ companyRouter.patch('/company', requirePerm('company.manage'), wrap(async (req, 
       recordingRetentionDays: z.number().int().min(1).max(3650), requireAdminMfa: z.boolean(), timezone: z.string().max(60),
       hiringStages: z.array(z.string().min(1).max(40)).min(2).max(20),
       jobCodePrefix: z.string().trim().toUpperCase().regex(PREFIX_RE, 'Use 2–8 letters or digits, e.g. INFO'),
+      themeColor: z.string().regex(THEME_RE, 'Use a hex colour like #4f46e5').nullable(),
     }).partial().optional(),
   }), req.body);
   const cur = await db.companies.get({ id: tenant(req) });
@@ -38,6 +41,18 @@ companyRouter.patch('/company', requirePerm('company.manage'), wrap(async (req, 
     billing_address: m.billing_address ?? null, state: m.state ?? null, settings: JSON.stringify(settings),
   });
   await audit(tenant(req), req.auth!, 'company.updated', tenant(req), req, Object.keys(b));
+  res.json({ ok: true });
+}));
+
+/* ---------- branding ---------- */
+companyRouter.post('/company/logo', requirePerm('company.manage'), logoUpload.single('file'), wrap(async (req, res) => {
+  const url = await storeLogo(tenant(req), req.file);
+  await audit(tenant(req), req.auth!, 'company.logo_updated', tenant(req), req);
+  res.status(201).json({ logoUrl: url });
+}));
+companyRouter.delete('/company/logo', requirePerm('company.manage'), wrap(async (req, res) => {
+  await removeLogo(tenant(req));
+  await audit(tenant(req), req.auth!, 'company.logo_removed', tenant(req), req);
   res.json({ ok: true });
 }));
 

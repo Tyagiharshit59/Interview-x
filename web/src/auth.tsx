@@ -5,7 +5,7 @@ export interface Me {
   user: { id: string; email: string; name: string; isSuperAdmin: boolean; emailVerified: boolean; mfaEnabled: boolean };
   memberships: Array<{ company_id: string; company_name: string; role: string }>;
   role: string | null; permissions: string[];
-  company: { id: string; name: string; slug: string; settings: Record<string, any> } | null;
+  company: { id: string; name: string; slug: string; settings: Record<string, any>; logoUrl?: string | null } | null;
 }
 interface Ctx { me: Me | null; loading: boolean; refresh: () => Promise<void>; setMe: (m: Me | null) => void; logout: () => Promise<void>; can: (p: string) => boolean }
 const C = createContext<Ctx>(null as any);

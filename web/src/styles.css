@@ -13,6 +13,9 @@
     --muted: 104 107 138;     /* secondary text */
     --ok: 16 150 102; --warn: 196 120 18; --danger: 214 50 72;
     color-scheme: light;
+    /* IntervueX default brand (indigo). A company theme overrides these at runtime (src/theme.ts). */
+    --brand-50: 241 240 255; --brand-100: 228 225 255; --brand-200: 203 197 255; --brand-300: 169 159 253; --brand-400: 139 124 248; --brand-500: 109 92 240;
+    --brand-600: 91 69 224; --brand-700: 75 54 194; --brand-800: 61 45 156; --brand-900: 43 33 112; --brand-950: 26 20 70; --brand-accent: 138 63 252;
     /* data-viz tokens (validated: categorical slots 1-3 all-pairs on these surfaces) */
     --viz-brand: #6d5cf0; --viz-1: #2a78d6; --viz-2: #eb6834; --viz-3: #1baf7a;
   }

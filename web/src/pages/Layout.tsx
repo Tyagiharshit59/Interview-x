@@ -6,6 +6,8 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../auth';
 import { get, post, fmtDate } from '../api';
+import { CompanyLogo } from '../ui';
+import { applyBrand } from '../theme';
 
 export function Logo({ light }: { light?: boolean }) {
   return (
@@ -57,6 +59,8 @@ export function Layout() {
     return () => clearInterval(t);
     // eslint-disable-next-line
   }, [me?.company?.id]);
+  // the company's own theme colour (falls back to the IntervueX default)
+  useEffect(() => { applyBrand(me?.company?.settings?.themeColor ?? null); return () => applyBrand(null); }, [me?.company?.id, me?.company?.settings?.themeColor]);
   useEffect(() => {
     if (!showN) return;
     const h = (e: MouseEvent) => { if (!bellRef.current?.contains(e.target as Node)) setShowN(false); };
@@ -84,7 +88,9 @@ export function Layout() {
         </div>
 
         {me && me.company && (
-          <div className="relative mt-5 rounded-2xl border border-white/[0.07] bg-white/[0.04] p-3">
+          <div className="relative mt-5 flex items-center gap-3 rounded-2xl border border-white/[0.07] bg-white/[0.04] p-3">
+            <CompanyLogo name={me.company.name} src={me.company.logoUrl} size={40} className="!ring-white/10" />
+            <div className="min-w-0 flex-1">
             <div className="text-[10.5px] font-bold uppercase tracking-[0.14em] text-slate-500">Workspace</div>
             {me.memberships.length > 1 ? (
               <div className="relative mt-1">
@@ -95,6 +101,7 @@ export function Layout() {
                 <ChevronsUpDown className="pointer-events-none absolute right-0 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               </div>
             ) : <div className="mt-1 truncate text-[14px] font-semibold text-white">{me.company.name}</div>}
+            </div>
           </div>
         )}
 

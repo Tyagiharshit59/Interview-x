@@ -11,6 +11,7 @@ import { audit, enforce, recordUsage, safeKey, saveFile, deleteFile } from '../s
 import { requireAuth, requireTenant, requirePerm, tenant } from '../auth.js';
 import { isParticipant } from './interviews.js';
 import { runnerInfo } from '../code.js';
+import { logoUrl, themeOf } from '../branding.js';
 
 export const publicRouter = Router();
 const joinLimiter = rateLimit({ windowMs: 10 * 60_000, limit: config.isProd ? 40 : 400, standardHeaders: true, legacyHeaders: false });
@@ -48,7 +49,7 @@ publicRouter.get('/join/:token', joinLimiter, wrap(async (req, res) => {
   const { i, cand, co } = await loadInvite(String(req.params.token));
   const cfg = j(i.config, {} as any);
   res.json({
-    company: co.name, title: i.title, jobTitle: cand.job_title, scheduledAt: i.scheduled_at, durationMin: i.duration_min, timezone: i.timezone, instructions: i.instructions,
+    company: co.name, companyLogo: logoUrl(co), themeColor: themeOf(co), title: i.title, jobTitle: cand.job_title, scheduledAt: i.scheduled_at, durationMin: i.duration_min, timezone: i.timezone, instructions: i.instructions,
     status: i.status, features: { coding: !!cfg.coding, whiteboard: cfg.whiteboard !== false, recording: !!cfg.recording, secondaryCamera: !!cfg.secondaryCamera }, notice: CONSENT_NOTICE,
     candidateFirstName: cand.name.split(' ')[0], serverTime: now(),
   });

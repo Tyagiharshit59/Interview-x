@@ -29,6 +29,7 @@ import { extractText, parseResume, matchScore } from '../parsing.js';
 import { createRoomTicket } from '../realtime.js';
 import { requirePerm, tenant } from '../auth.js';
 import { CONSENT_NOTICE } from './public.js';
+import { logoUrl } from '../branding.js';
 
 export const portalRouter = Router();
 const limiter = rateLimit({ windowMs: 15 * 60_000, limit: config.isProd ? 60 : 600, standardHeaders: true, legacyHeaders: false });
@@ -241,7 +242,7 @@ async function boardFilter(extra: any = {}) {
   return { status: 'published', is_template: { $ne: 1 }, public_listing: { $ne: 0 }, company_id: { $in: activeCos }, ...extra };
 }
 const jobCard = (jb: any, co: any, match?: number | null) => ({
-  id: jb.id, job_code: jb.job_code ?? null, title: jb.title, company: co?.name ?? 'Company', company_industry: co?.industry ?? null, department: jb.department ?? null, location: jb.location ?? null,
+  id: jb.id, job_code: jb.job_code ?? null, title: jb.title, company: co?.name ?? 'Company', company_logo: logoUrl(co), company_industry: co?.industry ?? null, department: jb.department ?? null, location: jb.location ?? null,
   employment_type: jb.employment_type ?? null, exp_min: jb.exp_min ?? null, exp_max: jb.exp_max ?? null, required_skills: j<string[]>(jb.required_skills, []),
   posted_at: jb.updated_at || jb.created_at, match: match ?? null,
 });

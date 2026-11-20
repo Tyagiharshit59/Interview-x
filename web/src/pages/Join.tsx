@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { get, post } from '../api';
-import { Button, ErrorBox, Field, Loading } from '../ui';
+import { Button, CompanyLogo, ErrorBox, Field, Loading } from '../ui';
+import { applyBrand } from '../theme';
 import { RoomView } from '../room/RoomView';
 import { getUserMedia } from '../room/useRoom';
 
@@ -14,6 +15,7 @@ export function Join() {
   const vid = useRef<HTMLVideoElement>(null); const raf = useRef<number>(0);
 
   useEffect(() => { get(`/public/join/${token}`).then(setInfo).catch(setErr); }, [token]);
+  useEffect(() => { applyBrand(info?.themeColor ?? null); return () => applyBrand(null); }, [info?.themeColor]);
   useEffect(() => { if (vid.current) vid.current.srcObject = stream; }, [stream, verified]);
   useEffect(() => () => cancelAnimationFrame(raf.current), []);
 
@@ -40,6 +42,7 @@ export function Join() {
   const browserOk = !!navigator.mediaDevices?.getUserMedia && typeof RTCPeerConnection !== 'undefined';
   return (
     <Frame>
+      <div className="flex items-center gap-3"><CompanyLogo name={info.company} src={info.companyLogo} size={52} /><div className="text-[13px] font-semibold uppercase tracking-[0.12em] text-muted">{info.company}</div></div>
       <h1 style={{ fontSize: '1.4rem' }}>{info.title}</h1>
       <p className="muted" style={{ margin: 0 }}>{info.company} · {info.jobTitle}</p>
       <div className="alert">📅 {start.toLocaleString(undefined, { dateStyle: 'full', timeStyle: 'short' })} ({Intl.DateTimeFormat().resolvedOptions().timeZone}) · {info.durationMin} minutes</div>

@@ -10,6 +10,7 @@ import { wrap, parse, bad, HttpError, newToken, sha256, addMinutes, addDays, isE
 import { audit, sendMail, notify } from '../services.js';
 import { PERMS } from '../auth.js';
 import { seedStarterQuestions } from './coding.js';
+import { logoUrl } from '../branding.js';
 
 export const authRouter = Router();
 const limiter = rateLimit({ windowMs: 15 * 60_000, limit: config.isProd ? 30 : 300, standardHeaders: true, legacyHeaders: false });
@@ -51,7 +52,7 @@ export async function userPayload(userId: string, companyId: string | null) {
   return {
     user: { id: u.id, email: u.email, name: u.name, isSuperAdmin: !!u.is_super_admin, emailVerified: !!u.email_verified, mfaEnabled: !!u.mfa_enabled },
     memberships, role, permissions,
-    company: company ? { id: company.id, name: company.name, slug: company.slug, settings: j(company.settings, {}) } : null,
+    company: company ? { id: company.id, name: company.name, slug: company.slug, settings: j(company.settings, {}), logoUrl: logoUrl(company) } : null,
   };
 }
 

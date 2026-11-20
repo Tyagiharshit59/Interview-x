@@ -3,7 +3,9 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Building2, Users, Video, IndianRupee, AlertTriangle, Plus, Download, Search, ArrowUpDown, ChevronLeft, Briefcase, UserRound, Activity, Gift, Globe, Tag, StickyNote, ShieldCheck, Clock, CheckCircle2, Copy } from 'lucide-react';
 import { fmtDate, get, money, patch, post, put } from '../api';
 import { useAuth } from '../auth';
-import { Badge, Button, Card, Empty, ErrorBox, Field, Loading, Meter, Modal, statusBadge, useLoad, useToast } from '../ui';
+import { Badge, Button, Card, CompanyLogo, Empty, ErrorBox, Field, Loading, Meter, Modal, statusBadge, useLoad, useToast } from '../ui';
+import { THEME_PRESETS } from '../theme';
+import { api } from '../api';
 import { BarList, Sparkline, TrendChart, VIZ, fmtINR, fmtNum, monthLabel, weekLabel } from '../charts';
 
 const inr = (n: number) => '₹' + Math.round(n || 0).toLocaleString('en-IN');
@@ -101,7 +103,7 @@ export function CompaniesTable({ initialHealth = '' }: { initialHealth?: string 
           <div className="table-wrap"><table><thead><tr>{th('name', 'Company')}<th>Plan</th><th>Health</th>{th('team', 'Team', true)}{th('candidates', 'Candidates', true)}{th('interviews', '30d interviews', true)}<th>8-week trend</th>{th('mrr', 'MRR', true)}{th('activity', 'Last active')}</tr></thead><tbody>
             {data.items.map((c: any) => (
               <tr key={c.id} className="cursor-pointer" onClick={() => nav(`/admin/companies/${c.id}`)}>
-                <td><div className="font-semibold text-brand-600 dark:text-brand-300">{c.name}</div><div className="text-[12px] text-muted">{[c.industry, c.country].filter(Boolean).join(' · ') || c.slug}{c.tags?.length ? ' · ' : ''}{c.tags?.map((t: string) => <span key={t} className="ml-1 rounded bg-gold-400/15 px-1.5 text-[11px] font-semibold text-gold-600 dark:text-gold-300">{t}</span>)}</div></td>
+                <td><div className="flex items-center gap-3"><CompanyLogo name={c.name} src={c.logo} size={34} /><div className="min-w-0"><div className="font-semibold text-brand-600 dark:text-brand-300">{c.name}</div><div className="text-[12px] text-muted">{[c.industry, c.country].filter(Boolean).join(' · ') || c.slug}{c.tags?.length ? ' · ' : ''}{c.tags?.map((t: string) => <span key={t} className="ml-1 rounded bg-gold-400/15 px-1.5 text-[11px] font-semibold text-gold-600 dark:text-gold-300">{t}</span>)}</div></div></div></td>
                 <td><div className="text-[13.5px]">{c.plan ?? '—'}</div><div className="text-[12px] text-muted">{c.sub_status ?? ''}</div></td>
                 <td><HealthBadge h={c.health} /></td>
                 <td className="right tabular-nums">{c.team}{c.employees ? <div className="text-[11.5px] text-muted">+{c.employees} emp.</div> : null}</td>
@@ -187,7 +189,7 @@ export function CompanyPage() {
         <div className="pointer-events-none absolute -right-16 -top-20 h-64 w-64 rounded-full bg-brand-500/30 blur-3xl" />
         <div className="relative flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex items-center gap-4">
-            <span className="grid h-14 w-14 place-items-center rounded-2xl bg-gold-gradient text-xl font-extrabold text-midnight-950">{c.name.slice(0, 1).toUpperCase()}</span>
+            <CompanyLogo name={c.name} src={c.logoUrl} size={60} className="!ring-white/20" />
             <div><h1 className="mb-1 text-white">{c.name}</h1>
               <div className="flex flex-wrap items-center gap-2 text-[13px] text-slate-300"><HealthBadge h={data.health} />{statusBadge(c.status)}<span>{s?.plan_name ?? 'No plan'}{s ? ` · ${s.status}` : ''}</span><span>· since {fmtDate(c.created_at, { dateStyle: 'medium' })}</span>{c.website && <a className="inline-flex items-center gap-1 text-gold-200" href={c.website.startsWith('http') ? c.website : `https://${c.website}`} target="_blank" rel="noreferrer"><Globe className="h-3.5 w-3.5" />website</a>}</div>
               {c.admin_tags?.length > 0 && <div className="mt-2 flex flex-wrap gap-1.5">{c.admin_tags.map((t: string) => <span key={t} className="rounded-md bg-white/10 px-2 py-0.5 text-[12px] font-semibold text-gold-200">{t}</span>)}</div>}
@@ -341,6 +343,18 @@ function ProfilePanel({ id, c, onSaved }: { id: string; c: any; onSaved: () => v
           <div><Button variant="primary" type="submit">Save profile</Button></div>
         </form>
       </Card>
+      <div className="flex flex-col gap-5">
+      <Card title="Branding">
+        <div className="flex items-center gap-4"><CompanyLogo name={c.name} src={c.logoUrl} size={64} />
+          <div className="flex flex-wrap gap-2">
+            <label className="btn sm cursor-pointer">Upload logo<input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={async e => { const f = e.target.files?.[0]; e.target.value = ''; if (!f) return; const fd = new FormData(); fd.append('file', f); const r = await fetch(`/api/admin/companies/${id}/logo`, { method: 'POST', body: fd, credentials: 'same-origin' }); const d = await r.json(); if (r.ok) { toast('Logo updated'); onSaved(); } else toast(d.error || 'Upload failed', 'error'); }} /></label>
+            {c.logoUrl && <Button size="sm" onClick={async () => { await api('DELETE', `/admin/companies/${id}/logo`); toast('Logo removed'); onSaved(); }}>Remove</Button>}
+          </div></div>
+        <div className="mt-4 text-[13px] font-semibold">Theme colour</div>
+        <div className="mt-2 flex flex-wrap gap-2">{THEME_PRESETS.map(p => <button key={p.hex} type="button" title={p.name} aria-label={p.name} onClick={async () => { await patch(`/admin/companies/${id}`, { themeColor: p.hex }); toast(`Theme set to ${p.name}`); onSaved(); }} className={`h-8 w-8 rounded-lg ring-2 ring-offset-2 ring-offset-surface ${c.theme === p.hex ? 'ring-ink' : 'ring-transparent'}`} style={{ background: p.hex }} />)}
+          {c.theme && <Button size="sm" variant="ghost" onClick={async () => { await patch(`/admin/companies/${id}`, { themeColor: null }); toast('Default theme restored'); onSaved(); }}>Reset</Button>}</div>
+        <p className="mb-0 mt-2 text-[12px] text-muted">Companies can also choose any custom colour in their own Settings → Branding.</p>
+      </Card>
       <Card title={<span className="flex items-center gap-2"><StickyNote className="h-5 w-5 text-gold-500" />Internal notes</span>}>
         <form className="flex flex-col gap-2" onSubmit={async e => { e.preventDefault(); if (!note.trim()) return; try { await post(`/admin/companies/${id}/notes`, { text: note }); setNote(''); toast('Note added'); onSaved(); } catch (x: any) { toast(x.message, 'error'); } }}>
           <textarea value={note} onChange={e => setNote(e.target.value)} placeholder="Calls, renewals, promises made… visible to the IntervueX team only" />
@@ -348,6 +362,7 @@ function ProfilePanel({ id, c, onSaved }: { id: string; c: any; onSaved: () => v
         </form>
         <div className="mt-4 flex flex-col gap-3">{(c.admin_notes || []).length ? c.admin_notes.map((n: any) => <div key={n.id} className="rounded-xl border border-line p-3"><div className="mb-1 flex items-center gap-2 text-[12px] text-muted"><Tag className="h-3 w-3" />{n.by} · {fmtDate(n.at)}</div><div className="whitespace-pre-wrap text-[14px]">{n.text}</div></div>) : <div className="text-[13.5px] text-muted">No notes yet.</div>}</div>
       </Card>
+      </div>
     </div>
   );
 }

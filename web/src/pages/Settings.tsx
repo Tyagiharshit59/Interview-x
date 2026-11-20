@@ -1,6 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { UserPlus, Users, ArrowRight } from 'lucide-react';
+import { UserPlus, Users, ArrowRight, Upload, Trash2, Palette, Check, Info } from 'lucide-react';
+import { CompanyLogo } from '../ui';
+import { applyBrand, brandScale, THEME_PRESETS } from '../theme';
+import { api } from '../api';
 import { fmtDate, get, patch, post, put } from '../api';
 import { useAuth } from '../auth';
 import { Badge, Button, Card, ChipInput, ErrorBox, Field, Loading, useLoad, useToast, PageHeader } from '../ui';
@@ -26,6 +29,7 @@ function CompanyTab() {
   return (
     <div className="flex flex-col gap-5">
     <TeamAccountsCard />
+    <BrandingCard />
     <Card title="Company profile & billing details">
       <form className="stack" onSubmit={async e => { e.preventDefault(); setErr(null); try { await patch('/company', { ...(f.settings?.jobCodePrefix ? { settings: { jobCodePrefix: f.settings.jobCodePrefix } } : {}), name: f.name, website: f.website || null, industry: f.industry || null, size: f.size || null, gst_number: f.gst_number || null, billing_address: f.billing_address || null, state: f.state || null }); toast('Saved'); void refresh(); } catch (x) { setErr(x); } }}>
         <ErrorBox error={err} />
@@ -130,4 +134,67 @@ function SupportTab() {
   const toast = useToast(); const [f, setF] = useState({ subject: '', body: '', allowAccessHours: 0 }); const [err, setErr] = useState<unknown>(null);
   return <Card title="Contact support"><form className="stack" onSubmit={async e => { e.preventDefault(); setErr(null); try { await post('/support', { ...f, allowAccessHours: Number(f.allowAccessHours) }); toast('Request sent'); setF({ subject: '', body: '', allowAccessHours: 0 }); } catch (x) { setErr(x); } }}><ErrorBox error={err} /><Field label="Subject"><input required value={f.subject} onChange={e => setF({ ...f, subject: e.target.value })} /></Field><Field label="Describe the issue"><textarea required value={f.body} onChange={e => setF({ ...f, body: e.target.value })} /></Field>
     <Field label="Allow read-only support access to my account" hint="Time-boxed. Every action is audited. Choose 0 for none."><select value={f.allowAccessHours} onChange={e => setF({ ...f, allowAccessHours: Number(e.target.value) })}><option value={0}>No access</option><option value={4}>4 hours</option><option value={24}>24 hours</option><option value={72}>72 hours</option></select></Field><div><Button variant="primary" type="submit">Send</Button></div></form></Card>;
+}
+
+/** Logo + theme colour. The preview updates live; saving applies it for everyone in the company. */
+function BrandingCard() {
+  const toast = useToast(); const { me, refresh, can } = useAuth();
+  const { data, reload } = useLoad(() => get('/company'));
+  const [color, setColor] = useState<string | null>(null); const [busy, setBusy] = useState(false);
+  const fileRef = useRef<HTMLInputElement | null>(null);
+  // leaving the page with an unsaved preview restores the company's saved theme
+  const savedRef = useRef<string | null>(null); savedRef.current = me?.company?.settings?.themeColor ?? null;
+  useEffect(() => () => applyBrand(savedRef.current), []);
+  if (!data || !me?.company) return null;
+  const saved = data.settings?.themeColor ?? null;
+  const current = color ?? saved ?? '#6d5cf0';
+  const scale = brandScale(current);
+  const editable = can('company.manage');
+  const preview = (hex: string) => { setColor(hex); applyBrand(hex); };
+  const onLogo = async (f: File) => {
+    const fd = new FormData(); fd.append('file', f);
+    try { const r = await fetch('/api/company/logo', { method: 'POST', body: fd, credentials: 'same-origin' }); const d = await r.json(); if (!r.ok) throw new Error(d.error || 'Upload failed'); toast('Logo updated'); await refresh(); void reload(); }
+    catch (e: any) { toast(e.message, 'error'); }
+  };
+  return (
+    <Card title={<span className="flex items-center gap-2"><Palette className="h-5 w-5 text-brand-500" />Branding</span>}>
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[280px_1fr]">
+        <div className="flex flex-col gap-3">
+          <div className="text-[13px] font-semibold">Company logo</div>
+          <div className="flex items-center gap-4"><CompanyLogo name={data.name} src={data.logoUrl} size={72} />
+            <div className="text-[12.5px] text-muted">PNG, JPG or WebP up to 1 MB. A square logo on a transparent or white background looks best.</div></div>
+          {editable && <div className="flex flex-wrap gap-2">
+            <input ref={el => { fileRef.current = el; }} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) void onLogo(f); e.target.value = ''; }} />
+            <Button size="sm" variant="primary" onClick={() => fileRef.current?.click()}><Upload className="h-3.5 w-3.5" />{data.logoUrl ? 'Replace logo' : 'Upload logo'}</Button>
+            {data.logoUrl && <Button size="sm" onClick={async () => { await api('DELETE', '/company/logo'); toast('Logo removed'); await refresh(); void reload(); }}><Trash2 className="h-3.5 w-3.5" />Remove</Button>}
+          </div>}
+          <p className="mb-0 text-[12px] text-muted">Shown in your workspace, on your jobs in the candidate portal and on candidates' interview join page.</p>
+        </div>
+        <div className="flex flex-col gap-4">
+          <div className="text-[13px] font-semibold">Theme colour</div>
+          <div className="flex flex-wrap gap-2.5">
+            {THEME_PRESETS.map(p => (
+              <button key={p.hex} type="button" disabled={!editable} onClick={() => preview(p.hex)} title={p.name} aria-label={p.name}
+                className={`grid h-10 w-10 place-items-center rounded-xl ring-2 ring-offset-2 ring-offset-surface transition hover:scale-105 ${current.toLowerCase() === p.hex ? 'ring-ink' : 'ring-transparent'}`} style={{ background: p.hex }}>
+                {current.toLowerCase() === p.hex && <Check className="h-4 w-4 text-white" />}
+              </button>
+            ))}
+            <label className="flex items-center gap-2 rounded-xl border border-line px-2.5 text-[13px]"><input type="color" disabled={!editable} value={current} onChange={e => preview(e.target.value)} className="!h-8 !w-10 !min-h-0 cursor-pointer !border-0 !p-0" aria-label="Custom colour" /><span className="font-mono">{current.toUpperCase()}</span></label>
+          </div>
+          <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-line bg-raised/50 p-4">
+            <span className="btn primary pointer-events-none">Primary button</span>
+            <span className="badge info">Badge</span>
+            <span className="text-[14px] font-semibold text-brand-600 dark:text-brand-300">Link text</span>
+            <span className="flex gap-1">{[100, 300, 500, 700, 900].map(k => <span key={k} className="h-6 w-6 rounded-md" style={{ background: `rgb(${scale.steps[k as 100].map(Math.round).join(' ')})` }} />)}</span>
+          </div>
+          {scale.adjusted && <div className="alert"><Info className="h-4 w-4" />This colour is quite light, so we deepened it slightly ({scale.base.toUpperCase()}) to keep white button text readable.</div>}
+          {editable && <div className="flex flex-wrap gap-2">
+            <Button variant="primary" busy={busy} disabled={color == null || color === saved} onClick={async () => { setBusy(true); try { await patch('/company', { settings: { themeColor: color } }); toast('Theme saved for your whole company'); await refresh(); setColor(null); void reload(); } catch (e: any) { toast(e.message, 'error'); } finally { setBusy(false); } }}>Save theme</Button>
+            {color != null && color !== saved && <Button onClick={() => { setColor(null); applyBrand(saved); }}>Cancel preview</Button>}
+            {saved && <Button variant="ghost" onClick={async () => { await patch('/company', { settings: { themeColor: null } }); applyBrand(null); toast('Back to the IntervueX default theme'); await refresh(); setColor(null); void reload(); }}>Use IntervueX default</Button>}
+          </div>}
+        </div>
+      </div>
+    </Card>
+  );
 }

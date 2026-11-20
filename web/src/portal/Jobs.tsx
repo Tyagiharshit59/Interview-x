@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Search, MapPin, Briefcase, Bookmark, BookmarkCheck, Building2, ArrowRight, Sparkles, CheckCircle2, Clock, ChevronLeft, ChevronRight, Globe, Target } from 'lucide-react';
 import { del, get, post } from '../api';
-import { Button, Empty, ErrorBox, Field, Loading, Modal, useLoad, useToast } from '../ui';
+import { Button, CompanyLogo, Empty, ErrorBox, Field, Loading, Modal, useLoad, useToast } from '../ui';
 import { useCand } from './Shell';
 
 const ago = (iso?: string) => {
@@ -29,7 +29,7 @@ export function JobCard({ job, onSaved }: { job: any; onSaved?: () => void }) {
   return (
     <Link to={`/portal/jobs/${job.id}`} className="group flex flex-col gap-4 rounded-2xl border border-line bg-surface p-5 text-ink no-underline shadow-soft transition duration-200 hover:-translate-y-0.5 hover:border-brand-200 hover:text-ink hover:shadow-lift dark:hover:border-brand-800">
       <div className="flex items-start gap-3.5">
-        <CompanyMark name={job.company} />
+        <CompanyLogo name={job.company} src={job.company_logo} size={48} />
         <div className="min-w-0 flex-1">
           {job.job_code && <div className="mb-0.5 font-mono text-[11.5px] font-semibold tracking-wide text-gold-600 dark:text-gold-300">{job.job_code}</div>}
           <div className="truncate text-[16px] font-bold group-hover:text-brand-600 dark:group-hover:text-brand-300">{job.title}</div>
@@ -140,7 +140,7 @@ export function PortalJobDetail() {
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_340px]">
         <div className="flex flex-col gap-6">
           <div className="rounded-3xl border border-line bg-surface p-6 shadow-soft sm:p-8">
-            <div className="flex items-start gap-4"><CompanyMark name={job.company} />
+            <div className="flex items-start gap-4"><CompanyLogo name={job.company} src={job.company_logo} size={56} />
               <div className="min-w-0"><h1 className="mb-1 text-2xl sm:text-3xl">{job.title}</h1><div className="flex items-center gap-1.5 text-muted"><Building2 className="h-4 w-4" />{job.company}{job.company_website && <a href={job.company_website.startsWith('http') ? job.company_website : `https://${job.company_website}`} target="_blank" rel="noreferrer" className="ml-2 inline-flex items-center gap-1 text-[13px]"><Globe className="h-3.5 w-3.5" />Website</a>}</div></div>
             </div>
             <div className="mt-5 flex flex-wrap gap-2">
