@@ -7,7 +7,7 @@ import fs from 'node:fs';
 // Each test file runs in its own process; this one gets its own embedded MongoDB in a throwaway directory.
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ivx-mig-'));
 process.env.STORAGE_DIR = tmp; process.env.NODE_ENV = 'test'; process.env.SUPER_ADMIN_PASSWORD = 'Test-Password-123!';
-delete process.env.MONGODB_URI;
+delete process.env.TEST_MONGODB_URI; // config ignores MONGODB_URI under NODE_ENV=test
 
 let db: any, raw: any, closeDb: any, ensureSeed: any, runMigrations: any, syncPlansFromLegacy: any, MIGRATIONS: any, FEATURES: any, CATEGORIES: any, LIMITS: any, now: any, isDuplicateKey: any;
 before(async () => {

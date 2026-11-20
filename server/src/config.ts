@@ -16,7 +16,8 @@ export const config = {
   jwtSecret: secret,
   isTest: process.env.NODE_ENV === 'test',
   // MongoDB. Set MONGODB_URI to your Atlas (or any replica-set) connection string. Without it, development/test use an embedded mongod.
-  mongo: { uri: process.env.MONGODB_URI || '', dbName: process.env.MONGODB_DB || 'intervuex', devPort: Number(process.env.MONGO_DEV_PORT || (process.env.NODE_ENV === 'test' ? 0 : 27117)) },
+  // Tests NEVER use MONGODB_URI (which may point at production): only TEST_MONGODB_URI, else an embedded throwaway mongod.
+  mongo: { uri: (process.env.NODE_ENV === 'test' ? process.env.TEST_MONGODB_URI : process.env.MONGODB_URI) || '', dbName: process.env.MONGODB_DB || 'intervuex', devPort: Number(process.env.MONGO_DEV_PORT || (process.env.NODE_ENV === 'test' ? 0 : 27117)) },
   storageDir: process.env.STORAGE_DIR || path.resolve(process.cwd(), '../storage'),
   smtp: process.env.SMTP_HOST
     ? { host: process.env.SMTP_HOST, port: Number(process.env.SMTP_PORT || 587), user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }

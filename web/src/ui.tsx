@@ -101,7 +101,8 @@ export const Meter = ({ used, limit }: { used: number; limit: number | null }) =
   return <div><div className="meter" role="progressbar" aria-valuenow={Math.round(pct)} aria-valuemin={0} aria-valuemax={100}><i style={{ width: pct + '%' }} /></div><span className="muted small">{used} / {limit}</span></div>;
 };
 
-export const statusBadge = (s: string) => {
+export const statusBadge = (s: string | null | undefined) => {
+  if (!s) return <Badge>unknown</Badge>;
   const m: Record<string, 'ok' | 'warn' | 'danger' | 'info' | undefined> = { scheduled: 'info', in_progress: 'warn', completed: 'ok', cancelled: 'danger', published: 'ok', draft: undefined, archived: undefined, active: 'ok', trialing: 'info', past_due: 'warn', expired: 'danger', paid: 'ok', pending: 'warn', failed: 'danger', ready: 'ok', suspended: 'danger' };
   return <Badge kind={m[s]}>{s.replace(/_/g, ' ')}</Badge>;
 };

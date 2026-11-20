@@ -1,5 +1,6 @@
 import { raw, db, now } from '../db.js';
 import { FEATURES, LIMITS, legacyFeatureKeys } from './catalog.js';
+import { DEFAULTS } from '../defaults.js';
 
 /**
  * Versioned, forward-only migrations for MongoDB.
@@ -82,6 +83,15 @@ export const MIGRATIONS: Migration[] = [
       await syncPlansFromLegacy();
       for (const u of await db.users.list({ is_super_admin: 1 }, { projection: { _id: 1 } }))
         await db.internal_staff.upsert({ user_id: u.id }, { role: 'super_admin', status: 'active' }, { created_at: now() });
+    },
+  },
+  {
+    version: 3, name: 'back-fill old SQL column defaults on documents written without them',
+    up: async () => {
+      // Documents created right after the switch to MongoDB could miss fields that SQL used to default (e.g. interviews.status).
+      for (const [collection, fields] of Object.entries(DEFAULTS))
+        for (const [field, value] of Object.entries(fields))
+          await raw.collection(collection).updateMany({ [field]: { $exists: false } }, { $set: { [field]: value } });
     },
   },
 ];

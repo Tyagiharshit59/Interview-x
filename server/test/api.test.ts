@@ -89,6 +89,9 @@ test('schedule interview with invite link; candidate identity + window', async (
   assert.equal(bad.status, 400);
   const r = await A.req('POST', '/interviews', { applicationId: appId, title: 'Tech Round 1', scheduledAt: iso(5), durationMin: 45, interviewerIds: [ianId, ownerId], config: { coding: true, recording: true, secondaryCamera: true } });
   assert.equal(r.status, 201); interviewId = r.data.id; inviteUrl = r.data.devInviteUrl;
+  // Regression: fields the old SQL schema defaulted must be present on new documents (MongoDB has no column defaults).
+  const det = await A.req('GET', `/interviews/${interviewId}`);
+  assert.equal(det.data.status, 'scheduled'); assert.equal(det.data.type, 'technical'); assert.equal(det.data.round_no, 1); assert.equal(det.data.timezone, 'UTC');
   const tok = inviteUrl.split('/join/')[1];
   const info = await new Client().req('GET', `/public/join/${tok}`);
   assert.equal(info.status, 200); assert.equal(info.data.company, 'Acme Corp');

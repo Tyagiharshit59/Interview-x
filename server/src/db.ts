@@ -5,6 +5,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { MongoClient, type Db, type ClientSession, type Document } from 'mongodb';
 import { config } from './config.js';
 import { runMigrations } from './migrations/index.js';
+import { DEFAULTS } from './defaults.js';
 
 export const uid = () => crypto.randomUUID();
 export const now = () => new Date().toISOString();
@@ -78,6 +79,11 @@ export const NOCASE = { locale: 'en', strength: 2 } as const;
 class Coll {
   constructor(readonly name: string) {}
   private get c() { return raw.collection(this.name); }
+  /** Fills the old SQL column defaults for fields that are absent (undefined). Explicit values, including null, are kept. */
+  private withDefaults(doc: Filter): Filter {
+    const d = DEFAULTS[this.name]; if (!d) return doc;
+    const o = { ...doc }; for (const [k, v] of Object.entries(d)) if (o[k] === undefined) o[k] = v; return o;
+  }
   /** One document or null. Filter key `id` means the primary key. */
   async get(filter: Filter, o: FindOpts = {}): Promise<any | null> { return out(await this.c.findOne(mapF(filter), sess({ sort: o.sort, projection: o.projection, collation: o.collation }) as any)); }
   async list(filter: Filter = {}, o: FindOpts = {}): Promise<any[]> {
@@ -88,8 +94,8 @@ class Coll {
   async exists(filter: Filter, o: FindOpts = {}) { return (await this.c.countDocuments(mapF(filter), sess({ limit: 1, collation: o.collation }) as any)) > 0; }
   async count(filter: Filter = {}) { return this.c.countDocuments(mapF(filter), sess() as any); }
   /** Inserts a document; `id` is generated when absent. Returns the id. Throws a duplicate-key error (see isDuplicateKey) on unique violations. */
-  async insert(doc: Filter): Promise<string> { const { id, ...rest } = doc; const _id = id ?? uid(); await this.c.insertOne({ _id, _seq: nextSeq(), ...rest } as any, sess() as any); return _id; }
-  async insertMany(docs: Filter[]) { if (!docs.length) return; await this.c.insertMany(docs.map(({ id, ...rest }) => ({ _id: id ?? uid(), _seq: nextSeq(), ...rest })) as any, sess() as any); }
+  async insert(doc: Filter): Promise<string> { const { id, ...rest } = this.withDefaults(doc); const _id = id ?? uid(); await this.c.insertOne({ _id, _seq: nextSeq(), ...rest } as any, sess() as any); return _id; }
+  async insertMany(docs: Filter[]) { if (!docs.length) return; await this.c.insertMany(docs.map(d => this.withDefaults(d)).map(({ id, ...rest }) => ({ _id: id ?? uid(), _seq: nextSeq(), ...rest })) as any, sess() as any); }
   /** $set on the first match. Returns how many documents matched (0 or 1). */
   async set(filter: Filter, fields: Filter): Promise<number> { return (await this.c.updateOne(mapF(filter), { $set: fields }, sess() as any)).matchedCount; }
   async setMany(filter: Filter, fields: Filter): Promise<number> { return (await this.c.updateMany(mapF(filter), { $set: fields }, sess() as any)).matchedCount; }
@@ -106,7 +112,7 @@ class Coll {
   async upsert(filter: Filter, fields: Filter, onInsert: Filter = {}) {
     const f = mapF(filter); const eq: Filter = {};
     for (const [k, v] of Object.entries(f)) if (!k.startsWith('$') && (typeof v !== 'object' || v === null)) eq[k] = v;
-    const set = { ...fields }; const ins: Filter = { ...onInsert };
+    const set = { ...fields }; const ins: Filter = this.withDefaults({ ...onInsert });
     for (const k of Object.keys(eq)) { delete set[k]; delete ins[k]; }
     for (const k of Object.keys(set)) delete ins[k];
     if (ins.id !== undefined) { ins._id = ins.id; delete ins.id; }
