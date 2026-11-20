@@ -192,3 +192,8 @@
   .cam-wrap { @apply mx-auto max-w-[520px] p-4; }
   .cam-wrap video { @apply aspect-[4/3] w-full rounded-2xl bg-black object-cover; }
 }
+
+/* Respect reduced-motion preferences */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+}

@@ -70,7 +70,7 @@ evalRouter.put('/interviews/:id/feedback', requirePerm('feedback.submit'), wrap(
     const submittedBy = new Set((await db.interview_feedback.list({ interview_id: i.id, submitted: 1 }, { projection: { interviewer_id: 1 } })).map(f => f.interviewer_id));
     const remaining = parts.filter(p => !submittedBy.has(p.user_id)).length;
     if (remaining === 0) {
-      for (const m of await db.company_members.list({ company_id: cid, role: { $in: ['hiring_manager', 'owner', 'admin'] }, status: 'active' }))
+      for (const m of await db.company_members.list({ company_id: cid, role: { $in: ['hiring_manager', 'hr', 'owner', 'admin'] }, status: 'active' }))
         await notify(cid, m.user_id, 'decision', `All feedback is in: ${i.title}`, 'Review the consolidated feedback and make a decision.', `/interviews/${i.id}/feedback`);
     }
   }

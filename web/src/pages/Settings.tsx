@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { UserPlus, Users, ArrowRight } from 'lucide-react';
 import { fmtDate, get, patch, post, put } from '../api';
 import { useAuth } from '../auth';
 import { Badge, Button, Card, ChipInput, ErrorBox, Field, Loading, useLoad, useToast, PageHeader } from '../ui';
@@ -22,6 +24,8 @@ function CompanyTab() {
   if (!f) return error ? <ErrorBox error={error} /> : <Loading />;
   const set = (k: string, v: any) => setF({ ...f, [k]: v });
   return (
+    <div className="flex flex-col gap-5">
+    <TeamAccountsCard />
     <Card title="Company profile & billing details">
       <form className="stack" onSubmit={async e => { e.preventDefault(); setErr(null); try { await patch('/company', { name: f.name, website: f.website || null, industry: f.industry || null, size: f.size || null, gst_number: f.gst_number || null, billing_address: f.billing_address || null, state: f.state || null }); toast('Saved'); void refresh(); } catch (x) { setErr(x); } }}>
         <ErrorBox error={err} />
@@ -33,6 +37,34 @@ function CompanyTab() {
         <div><Button variant="primary" type="submit">Save</Button></div>
       </form>
     </Card>
+    </div>
+  );
+}
+
+/** Shortcut from the company profile to creating user accounts (HR, recruiters, interviewers…). */
+function TeamAccountsCard() {
+  const { can } = useAuth();
+  const { data } = useLoad(() => get('/team'));
+  const members = data?.members || [];
+  const pending = members.filter((m: any) => m.pending_activation).length;
+  return (
+    <div className="relative overflow-hidden rounded-2xl bg-night-gradient p-6 text-white shadow-lift">
+      <div className="pointer-events-none absolute -right-16 -top-16 h-52 w-52 rounded-full bg-brand-500/30 blur-3xl" />
+      <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-4">
+          <span className="grid h-12 w-12 flex-none place-items-center rounded-2xl bg-white/10 text-gold-300 ring-1 ring-white/10"><Users className="h-6 w-6" /></span>
+          <div>
+            <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-gold-300">Team & user accounts</div>
+            <div className="mt-1 text-[17px] font-bold text-white">Create logins for your HR team, recruiters and interviewers</div>
+            <div className="mt-0.5 text-[13px] text-slate-400">{members.length} member{members.length === 1 ? '' : 's'}{pending ? ` · ${pending} awaiting activation` : ''}</div>
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {can('members.manage') && <Link className="btn gold" to="/team?add=1"><UserPlus className="h-4 w-4" />Add team member</Link>}
+          <Link className="btn !border-white/15 !bg-white/10 !text-white hover:!bg-white/20" to="/team">Manage team <ArrowRight className="h-4 w-4" /></Link>
+        </div>
+      </div>
+    </div>
   );
 }
 

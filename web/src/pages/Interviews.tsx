@@ -51,7 +51,7 @@ export function ScheduleWizard() {
   useEffect(() => { const a = sp.get('applicationId'); if (a) get(`/applications/${a}`).then(r => { setApp(r); setF((p: any) => ({ ...p, title: `Technical interview: ${r.job_title}`, interviewerIds: r.interviewer_ids })); setStep(2); }).catch(setErr); }, [sp]);
   const set = (k: string, v: any) => setF((p: any) => ({ ...p, [k]: v }));
   const choose = (a: any) => { setApp({ id: a.id, candidate_name: a.name, job_title: jobs?.items.find((j: any) => j.id === jobId)?.title }); set('title', `Technical interview: ${a.name}`); };
-  const interviewers = team?.members.filter((m: any) => m.status === 'active' && ['owner', 'admin', 'interviewer', 'hiring_manager'].includes(m.role)) || [];
+  const interviewers = team?.members.filter((m: any) => m.status === 'active' && ['owner', 'admin', 'hr', 'interviewer', 'hiring_manager'].includes(m.role) && !m.pending_activation) || [];
   const submit = async () => {
     setBusy(true); setErr(null);
     try {

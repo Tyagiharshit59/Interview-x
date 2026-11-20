@@ -256,6 +256,48 @@ test('secondary camera QR: single session, expires, requires explicit consent', 
   void ian; assert.notEqual(qr2.data.url, qr.data.url);
 });
 
+test('company admin creates an HR account; HR activates via single-use link; HR permissions enforced', async () => {
+  // admin creates the account directly (no password chosen or sent by the admin)
+  const bad = await A.req('POST', '/team/members', { name: 'H', email: 'not-an-email', role: 'hr' });
+  assert.equal(bad.status, 422);
+  const r = await A.req('POST', '/team/members', { name: 'Hema HR', email: 'Hema@Acme.test', role: 'hr', designation: 'HR Business Partner' });
+  assert.equal(r.status, 201); assert.equal(r.data.newAccount, true); assert.ok(r.data.devActivateUrl);
+  const dup = await A.req('POST', '/team/members', { name: 'Hema HR', email: 'hema@acme.test', role: 'hr' });
+  assert.equal(dup.status, 409);
+  const team = await A.req('GET', '/team');
+  const hm = team.data.members.find((m: any) => m.email === 'hema@acme.test');
+  assert.equal(hm.role, 'hr'); assert.equal(hm.pending_activation, true); assert.equal(hm.designation, 'HR Business Partner');
+  // cannot sign in before activation
+  const H = new Client();
+  assert.equal((await H.req('POST', '/auth/login', { email: 'hema@acme.test', password: 'anything1' })).status, 401);
+  // resending invalidates the first link
+  const first = new URL(r.data.devActivateUrl).searchParams.get('token')!;
+  const resend = await A.req('POST', `/team/members/${hm.id}/resend-activation`);
+  assert.equal(resend.status, 200);
+  assert.equal((await H.req('POST', '/auth/activate', { token: first, password: 'HemaPassw0rd' })).status, 400, 'old link no longer works');
+  const token = new URL(resend.data.devActivateUrl).searchParams.get('token')!;
+  const info = await H.req('GET', `/auth/activate/${token}`);
+  assert.equal(info.data.company, 'Acme Corp'); assert.equal(info.data.role, 'hr');
+  assert.equal((await H.req('POST', '/auth/activate', { token, password: 'short' })).status, 422, 'password policy applies');
+  const act = await H.req('POST', '/auth/activate', { token, password: 'HemaPassw0rd' });
+  assert.equal(act.status, 200); assert.equal(act.data.role, 'hr'); assert.equal(act.data.user.emailVerified, true);
+  assert.equal((await H.req('POST', '/auth/activate', { token, password: 'HemaPassw0rd' })).status, 400, 'single use');
+  assert.equal((await A.req('GET', '/team')).data.members.find((m: any) => m.email === 'hema@acme.test').pending_activation, false);
+  // HR can do HR work...
+  assert.equal((await H.req('POST', '/jobs', { title: 'HR-created role', required_skills: ['communication'] })).status, 201);
+  assert.equal((await H.req('GET', '/analytics')).status, 200);
+  // ...but cannot manage the team, billing or company settings
+  assert.equal((await H.req('POST', '/team/members', { name: 'Sneaky Admin', email: 'sneaky@acme.test', role: 'admin' })).status, 403);
+  assert.equal((await H.req('PATCH', '/company', { name: 'Hacked' })).status, 403);
+  assert.equal((await H.req('GET', '/billing')).status, 403);
+  // an existing IntervueX user added by another company keeps their account (no new password, no activation)
+  const x = await B.req('POST', '/team/members', { name: 'Hema HR', email: 'hema@acme.test', role: 'recruiter' });
+  assert.equal(x.status, 201); assert.equal(x.data.newAccount, false); assert.equal(x.data.devActivateUrl, undefined);
+  const again = new Client();
+  const li = await again.req('POST', '/auth/login', { email: 'hema@acme.test', password: 'HemaPassw0rd' });
+  assert.equal(li.status, 200); assert.equal(li.data.memberships.length, 2);
+});
+
 test('login lockout, password reset invalidates sessions, MFA', async () => {
   const C = new Client();
   for (let i = 0; i < 5; i++) assert.equal((await C.req('POST', '/auth/login', { email: 'bob@beta.test', password: 'wrong-pass1' })).status, 401);

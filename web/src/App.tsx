@@ -4,7 +4,7 @@ import { useAuth } from './auth';
 import { Loading } from './ui';
 import { Layout } from './pages/Layout';
 import { Home, PricingPage } from './pages/Public';
-import { Login, Register, Forgot, ResetPassword, VerifyEmail, AcceptInvite } from './pages/AuthPages';
+import { Login, Register, Forgot, ResetPassword, VerifyEmail, AcceptInvite, ActivateAccount } from './pages/AuthPages';
 import { Dashboard } from './pages/Dashboard';
 import { JobsList, JobEditor, JobDetail } from './pages/Jobs';
 import { CandidatesList, CandidateProfile } from './pages/Candidates';
@@ -47,6 +47,7 @@ export function App() {
         <Route path="/register" element={<Register />} />
         <Route path="/forgot-password" element={<Forgot />} />
         <Route path="/reset-password" element={<ResetPassword />} />
+        <Route path="/activate" element={<ActivateAccount />} />
         <Route path="/verify-email" element={<VerifyEmail />} />
         <Route path="/accept-invite" element={<AcceptInvite />} />
         <Route path="/join/:token" element={<Join />} />

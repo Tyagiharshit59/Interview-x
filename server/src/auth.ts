@@ -5,29 +5,29 @@ import { config } from './config.js';
 import { HttpError, forbidden } from './util.js';
 import { audit } from './services.js';
 
-export type Role = 'owner' | 'admin' | 'recruiter' | 'interviewer' | 'hiring_manager';
-export const ROLES: Role[] = ['owner', 'admin', 'recruiter', 'interviewer', 'hiring_manager'];
+export type Role = 'owner' | 'admin' | 'hr' | 'recruiter' | 'interviewer' | 'hiring_manager';
+export const ROLES: Role[] = ['owner', 'admin', 'hr', 'recruiter', 'interviewer', 'hiring_manager'];
 
-const ALL: Role[] = ['owner', 'admin', 'recruiter', 'interviewer', 'hiring_manager'];
+const ALL: Role[] = ['owner', 'admin', 'hr', 'recruiter', 'interviewer', 'hiring_manager'];
 export const PERMS = {
   'company.manage': ['owner', 'admin'],
   'billing.manage': ['owner', 'admin'],
   'members.manage': ['owner', 'admin'],
   'jobs.read': ALL,
-  'jobs.write': ['owner', 'admin', 'recruiter'],
+  'jobs.write': ['owner', 'admin', 'hr', 'recruiter'],
   'candidates.read': ALL,
-  'candidates.write': ['owner', 'admin', 'recruiter'],
+  'candidates.write': ['owner', 'admin', 'hr', 'recruiter'],
   'interviews.read': ALL,
-  'interviews.schedule': ['owner', 'admin', 'recruiter'],
-  'interviews.conduct': ['owner', 'admin', 'interviewer', 'hiring_manager'],
-  'recordings.view': ['owner', 'admin', 'hiring_manager', 'interviewer'],
+  'interviews.schedule': ['owner', 'admin', 'hr', 'recruiter'],
+  'interviews.conduct': ['owner', 'admin', 'hr', 'interviewer', 'hiring_manager'],
+  'recordings.view': ['owner', 'admin', 'hr', 'hiring_manager', 'interviewer'],
   'recordings.delete': ['owner', 'admin'],
-  'feedback.submit': ['owner', 'admin', 'interviewer', 'hiring_manager'],
-  'feedback.viewAll': ['owner', 'admin', 'hiring_manager', 'recruiter'],
+  'feedback.submit': ['owner', 'admin', 'hr', 'interviewer', 'hiring_manager'],
+  'feedback.viewAll': ['owner', 'admin', 'hr', 'hiring_manager', 'recruiter'],
   'decision.make': ['owner', 'admin', 'hiring_manager'],
   'questions.write': ['owner', 'admin', 'recruiter', 'interviewer'],
-  'analytics.view': ['owner', 'admin', 'recruiter', 'hiring_manager'],
-  'reports.export': ['owner', 'admin', 'hiring_manager'],
+  'analytics.view': ['owner', 'admin', 'hr', 'recruiter', 'hiring_manager'],
+  'reports.export': ['owner', 'admin', 'hr', 'hiring_manager'],
   'ai.use': ALL,
   'audit.view': ['owner', 'admin'],
 } as const satisfies Record<string, readonly Role[]>;

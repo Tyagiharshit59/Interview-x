@@ -22,6 +22,8 @@ async function createToken(userId: string, purpose: string, minutes: number, pay
   await db.user_tokens.insert({ token_hash: sha256(raw), user_id: userId, purpose, expires_at: addMinutes(minutes), used_at: null, payload: payload ? JSON.stringify(payload) : null });
   return raw;
 }
+/** Used by company routes to issue account-activation links. */
+export const createAccountToken = createToken;
 async function consumeToken(raw: string, purpose: string) {
   const t = await db.user_tokens.get({ token_hash: sha256(raw), purpose });
   if (!t || t.used_at || isExpired(t.expires_at)) throw bad('This link is invalid or has expired', 'bad_token');
@@ -172,6 +174,33 @@ authRouter.post('/reset-password', wrap(async (req, res) => {
   await db.users.update({ id: t.user_id }, { $set: { password_hash: bcrypt.hashSync(b.password, 12), failed_logins: 0, locked_until: null }, $inc: { session_version: 1 } });
   await audit(null, { userId: t.user_id }, 'auth.password_reset', t.user_id, req);
   res.json({ ok: true });
+}));
+
+/* ---------- account activation (accounts created by a company admin) ---------- */
+authRouter.get('/activate/:token', wrap(async (req, res) => {
+  const t = await db.user_tokens.get({ token_hash: sha256(String(req.params.token)), purpose: 'activate_account' });
+  if (!t || t.used_at || isExpired(t.expires_at)) throw bad('This activation link is invalid or has expired. Ask your company admin to resend it.', 'bad_token');
+  const u = await db.users.get({ id: t.user_id });
+  const cid = j<any>(t.payload, {}).companyId;
+  const co = cid ? await db.companies.get({ id: cid }) : null;
+  const m = cid ? await db.company_members.get({ company_id: cid, user_id: t.user_id }) : null;
+  res.json({ name: u?.name, email: u?.email, company: co?.name ?? null, role: m?.role ?? null });
+}));
+authRouter.post('/activate', wrap(async (req, res) => {
+  const b = parse(z.object({ token: z.string().min(10), password }), req.body);
+  const t = await consumeToken(b.token, 'activate_account');
+  const u = await db.users.get({ id: t.user_id });
+  if (!u) throw bad('This activation link is invalid', 'bad_token');
+  if (u.password_hash) throw bad('This account is already active. Please sign in.', 'already_active');
+  // Choosing a password through a link sent to the address also verifies the email.
+  await db.users.update({ id: u.id }, { $set: { password_hash: bcrypt.hashSync(b.password, 12), email_verified: 1, failed_logins: 0, locked_until: null, activated_at: now() }, $inc: { session_version: 1 } });
+  const fresh = await db.users.get({ id: u.id });
+  const cid = j<any>(t.payload, {}).companyId;
+  const mems = await activeMemberships(u.id);
+  const companyId = cid && mems.some(x => x.m.company_id === cid) ? cid : (mems[0]?.m.company_id ?? null);
+  issueSession(res, fresh, companyId);
+  await audit(companyId, { userId: u.id, email: u.email }, 'auth.account_activated', u.id, req);
+  res.json(await userPayload(u.id, companyId));
 }));
 
 authRouter.post('/change-password', requireAuth, wrap(async (req, res) => {

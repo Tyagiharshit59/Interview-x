@@ -134,3 +134,31 @@ export function AcceptInvite() {
     </Shell>
   );
 }
+
+const ROLE_LABEL: Record<string, string> = { owner: 'Owner', admin: 'Admin', hr: 'HR', recruiter: 'Recruiter', interviewer: 'Interviewer', hiring_manager: 'Hiring manager' };
+
+/** Account created by a company admin: the person chooses their password here (single-use link). */
+export function ActivateAccount() {
+  const [sp] = useSearchParams(); const token = sp.get('token') || ''; const { setMe } = useAuth(); const nav = useNavigate();
+  const [info, setInfo] = useState<any>(null); const [err, setErr] = useState<any>(null); const [busy, setBusy] = useState(false);
+  const [f, setF] = useState({ password: '', confirm: '' });
+  useEffect(() => { get(`/auth/activate/${token}`).then(setInfo).catch(setErr); }, [token]);
+  if (err && !info) return <Shell title="Activation link problem" sub={<Link to="/login">Go to sign in</Link>}><ErrorBox error={err} /></Shell>;
+  if (!info) return <Shell title="Activate your account"><p className="muted">Checking your link…</p></Shell>;
+  const mismatch = f.confirm.length > 0 && f.password !== f.confirm;
+  const fe = (p: string) => err?.details?.find?.((d: any) => d.path === p)?.message;
+  return (
+    <Shell title={`Welcome, ${(info.name || '').split(' ')[0]}`} subtitle={<>Set a password to activate your account{info.company ? <> at <b className="text-ink">{info.company}</b></> : null}{info.role ? <> as <b className="text-ink">{ROLE_LABEL[info.role] || info.role}</b></> : null}.</>} sub={<>Already activated? <Link to="/login">Sign in</Link></>}>
+      <form className="stack" onSubmit={async e => {
+        e.preventDefault(); if (mismatch) return; setBusy(true); setErr(null);
+        try { const r = await post('/auth/activate', { token, password: f.password }); setMe(r); nav('/dashboard?welcome=1', { replace: true }); } catch (x) { setErr(x); } finally { setBusy(false); }
+      }}>
+        {err && !err.details && <ErrorBox error={err} />}
+        <Field label="Email"><input value={info.email || ''} disabled /></Field>
+        <Field label="Create a password" hint="At least 8 characters, with a letter and a number" error={fe('password')}><input type="password" required autoFocus autoComplete="new-password" value={f.password} onChange={e => setF({ ...f, password: e.target.value })} /></Field>
+        <Field label="Confirm password" error={mismatch ? 'Passwords do not match' : undefined}><input type="password" required autoComplete="new-password" value={f.confirm} onChange={e => setF({ ...f, confirm: e.target.value })} /></Field>
+        <Button variant="primary" busy={busy} type="submit" className="!min-h-[48px] w-full" disabled={mismatch}>Activate account</Button>
+      </form>
+    </Shell>
+  );
+}
