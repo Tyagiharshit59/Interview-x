@@ -31,7 +31,7 @@ export function JobsList() {
   );
 }
 
-const blank = { title: '', department: '', location: '', employment_type: 'full-time', exp_min: '' as any, exp_max: '' as any, description: '', responsibilities: '', qualifications: '', required_skills: [] as string[], preferred_skills: [] as string[], screening_questions: [] as string[], interviewer_ids: [] as string[], is_template: false };
+const blank = { title: '', department: '', location: '', employment_type: 'full-time', exp_min: '' as any, exp_max: '' as any, description: '', responsibilities: '', qualifications: '', required_skills: [] as string[], preferred_skills: [] as string[], screening_questions: [] as string[], interviewer_ids: [] as string[], is_template: false, public_listing: true };
 
 export function JobEditor() {
   const { id } = useParams(); const nav = useNavigate(); const toast = useToast(); const fileRef = useRef<HTMLInputElement>(null);
@@ -96,6 +96,7 @@ export function JobEditor() {
         <Field label="Default interviewers"><select multiple value={f.interviewer_ids} onChange={e => set('interviewer_ids', [...e.target.selectedOptions].map(o => o.value))} style={{ minHeight: 110 }}>
           {team?.members.filter((m: any) => m.status === 'active').map((m: any) => <option key={m.user_id} value={m.user_id}>{m.name} ({m.role.replace('_', ' ')})</option>)}</select></Field>
         <label className="check" style={{ marginTop: 10 }}><input type="checkbox" checked={f.is_template} onChange={e => set('is_template', e.target.checked)} />Save as a reusable template</label>
+        {!f.is_template && <label className="check" style={{ marginTop: 8 }}><input type="checkbox" checked={f.public_listing !== false} onChange={e => set('public_listing', e.target.checked)} /><span>List on the public careers portal when published <span className="muted">(job seekers can find and apply; untick for confidential roles)</span></span></label>}
       </Card>
       <div className="row"><Button variant="primary" busy={busy} type="submit">Save draft</Button>{!f.is_template && <Button busy={busy} type="button" onClick={() => save(true)}>Save & publish</Button>}</div>
     </form>

@@ -20,6 +20,7 @@ import { evalRouter } from './routes/evaluation.js';
 import { analyticsRouter } from './routes/analytics.js';
 import { billingRouter, webhookRouter } from './routes/billing.js';
 import { adminRouter } from './routes/admin.js';
+import { portalRouter, candidateUpdatesRouter } from './routes/portal.js';
 import { requireAuth as ra } from './auth.js';
 import { attachRealtime } from './realtime.js';
 import { sendMail, notify } from './services.js';
@@ -55,12 +56,13 @@ app.use('/api', (req, _res, next) => {
 app.get('/api/health', (_req, res) => res.json({ ok: true, time: now() }));
 app.use('/api/auth', authRouter);
 app.use('/api/public', publicRouter);
+app.use('/api/portal', portalRouter);
 app.use('/api/files', filesRouter);
 app.use('/api/admin', requireAuth, adminRouter);
 
 const tenantApi = express.Router();
 tenantApi.use(requireAuth, requireTenant);
-tenantApi.use(companyRouter, recruitRouter, interviewRouter, codingRouter, evalRouter, analyticsRouter, billingRouter);
+tenantApi.use(companyRouter, recruitRouter, interviewRouter, codingRouter, evalRouter, analyticsRouter, billingRouter, candidateUpdatesRouter);
 app.use('/api', mediaRouter);
 app.use('/api', tenantApi);
 void ra;

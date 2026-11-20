@@ -94,6 +94,16 @@ export const MIGRATIONS: Migration[] = [
           await raw.collection(collection).updateMany({ [field]: { $exists: false } }, { $set: { [field]: value } });
     },
   },
+  {
+    version: 4, name: 'candidate portal: accounts, saved jobs, shared updates, job board',
+    up: async () => {
+      await idx('candidate_accounts', { email: 1 }, { unique: true });
+      await idx('saved_jobs', { account_id: 1, job_id: 1 }, { unique: true });
+      await idx('candidate_updates', { application_id: 1, created_at: -1 });
+      await raw.collection('candidates').createIndex({ email: 1 }, { collation: { locale: 'en', strength: 2 } });
+      await idx('jobs', { status: 1, is_template: 1, updated_at: -1 });
+    },
+  },
 ];
 
 /** Upserts the feature and limit vocabularies. Safe to run on every start. */

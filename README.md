@@ -24,6 +24,9 @@ Open http://localhost:5173 and **Start free trial** to create a company. A 14-da
 * **Payments:** without Razorpay keys the Billing page uses a dev-only payment simulator.
 * **Camera/mic** work on `localhost`. On any other host you need HTTPS.
 
+### Careers portal for job seekers
+Open http://localhost:5173/portal. Job seekers create their own profile (separate from company accounts), search and save jobs, get skill-based recommendations, apply with their CV, track applications, read updates a company shares, and join interviews they were invited to. Company data is shown only for the candidate's **verified** email. Published jobs are listed unless "List on the public careers portal" is unticked in the job editor.
+
 ### Open it on your phone (same Wi-Fi)
 `npm run dev:phone` serves the web app over HTTPS on your local network (phones only allow camera/microphone on HTTPS). Open the **Network** address it prints (e.g. `https://192.168.x.x:5173`) on the phone, accept the self-signed certificate warning, and allow Node.js through Windows Firewall on *Private* networks if asked. Set `APP_URL` in `server/.env` to that address so emailed/printed invite links point to it.
 

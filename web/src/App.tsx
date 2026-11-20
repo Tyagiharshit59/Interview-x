@@ -19,6 +19,12 @@ import { Join } from './pages/Join';
 import { CameraCompanion } from './pages/Camera';
 import { Playback } from './pages/Playback';
 import { Admin } from './pages/Admin';
+import { CandProvider, PortalLayout, RequireCand, PortalLogin, PortalRegister, PortalVerify, PortalForgot, PortalReset } from './portal/Shell';
+import { PortalHome, JobSearch, PortalJobDetail, SavedJobs } from './portal/Jobs';
+import { CandDashboard, CandApplications, CandInterviews, CandJoin, CandProfile } from './portal/Account';
+import { Outlet } from 'react-router-dom';
+
+const Cand = () => <CandProvider><Outlet /></CandProvider>;
 
 const Room = lazy(() => import('./room/Room').then(m => ({ default: m.Room })));
 
@@ -51,6 +57,26 @@ export function App() {
         <Route path="/verify-email" element={<VerifyEmail />} />
         <Route path="/accept-invite" element={<AcceptInvite />} />
         <Route path="/join/:token" element={<Join />} />
+
+        {/* Candidate careers portal (separate candidate accounts) */}
+        <Route element={<Cand />}>
+          <Route path="/portal/login" element={<PortalLogin />} />
+          <Route path="/portal/register" element={<PortalRegister />} />
+          <Route path="/portal/verify" element={<PortalVerify />} />
+          <Route path="/portal/forgot-password" element={<PortalForgot />} />
+          <Route path="/portal/reset-password" element={<PortalReset />} />
+          <Route path="/portal/interviews/:id/join" element={<RequireCand><CandJoin /></RequireCand>} />
+          <Route element={<PortalLayout />}>
+            <Route path="/portal" element={<PortalHome />} />
+            <Route path="/portal/jobs" element={<JobSearch />} />
+            <Route path="/portal/jobs/:id" element={<PortalJobDetail />} />
+            <Route path="/portal/dashboard" element={<RequireCand><CandDashboard /></RequireCand>} />
+            <Route path="/portal/applications" element={<RequireCand><CandApplications /></RequireCand>} />
+            <Route path="/portal/interviews" element={<RequireCand><CandInterviews /></RequireCand>} />
+            <Route path="/portal/saved" element={<RequireCand><SavedJobs /></RequireCand>} />
+            <Route path="/portal/profile" element={<RequireCand><CandProfile /></RequireCand>} />
+          </Route>
+        </Route>
         <Route path="/camera/:token" element={<CameraCompanion />} />
 
         <Route path="/interviews/:id/room" element={needCompany(<Room />)} />

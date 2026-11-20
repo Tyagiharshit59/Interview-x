@@ -18,7 +18,7 @@ export async function api<T = any>(method: string, url: string, body?: unknown):
   try {
     r = await fetch('/api' + url, { method, credentials: 'same-origin', headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined, body: body !== undefined ? JSON.stringify(body) : undefined });
   } catch { throw new ApiError(0, 'Cannot reach the server. Check your connection and try again.', 'network'); }
-  if (r.status === 401 && !url.startsWith('/auth/') && !url.startsWith('/public/')) window.dispatchEvent(new Event('ivx:unauthenticated'));
+  if (r.status === 401 && !url.startsWith('/auth/') && !url.startsWith('/public/') && !url.startsWith('/portal/')) window.dispatchEvent(new Event('ivx:unauthenticated'));
   return handle(r);
 }
 export const get = <T = any>(u: string) => api<T>('GET', u);

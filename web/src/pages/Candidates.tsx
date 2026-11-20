@@ -83,6 +83,7 @@ function ImportCsv({ onClose, onDone }: { onClose: () => void; onDone: (r: any) 
 }
 
 export function CandidateProfile() {
+  const [shareApp, setShareApp] = useState<any>(null);
   const { id } = useParams(); const { can, me } = useAuth(); const toast = useToast(); const nav = useNavigate(); const { confirm, node } = useConfirm();
   const { data, error, reload } = useLoad(() => get(`/candidates/${id}`), [id]);
   const { data: jobs } = useLoad(() => get('/jobs'));
@@ -107,11 +108,12 @@ export function CandidateProfile() {
             <div key={a.id} className="stack gap-sm" style={{ padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
               <div className="row between"><Link to={`/jobs/${a.job_id}`}><b>{a.job_title}</b></Link><Badge kind="info">{a.stage}</Badge></div>
               {a.match_score != null && <details><summary className="small">Skill match: <b>{a.match_score}%</b> (decision support only)</summary><div className="small muted">Matched: {a.match_detail?.matchedRequired.join(', ') || '—'}<br />Missing: {a.match_detail?.missingRequired.join(', ') || '—'}<br />{a.match_detail?.experienceNote}<br /><i>{a.match_detail?.disclaimer}</i></div></details>}
-              <div className="row gap-sm"><Button size="sm" onClick={() => loadNotes(a.id)}>Notes</Button>{can('interviews.schedule') && <Link className="btn sm" to={`/interviews/new?applicationId=${a.id}`}>Schedule interview</Link>}{can('decision.make') && <Button size="sm" onClick={() => setDecide(a)}>Record decision</Button>}</div>
+              <div className="row gap-sm"><Button size="sm" onClick={() => loadNotes(a.id)}>Notes</Button>{can('interviews.schedule') && <Link className="btn sm" to={`/interviews/new?applicationId=${a.id}`}>Schedule interview</Link>}{can('decision.make') && <Button size="sm" onClick={() => setDecide(a)}>Record decision</Button>}{can('candidates.write') && <Button size="sm" onClick={() => setShareApp(a)}>Share update with candidate</Button>}</div>
               {a.decision && <div className="small">Decision: <b>{a.decision.replace('_', ' ')}</b>{a.decision_note ? ` — ${a.decision_note}` : ''}</div>}
             </div>)) : <div className="muted">Not attached to any job yet.</div>}
         </Card>
       </div>
+      {shareApp && <ShareUpdate app={shareApp} onClose={() => setShareApp(null)} />}
       {activeApp && <Card title="Notes" actions={<Button size="sm" onClick={() => setActiveApp(null)}>Close</Button>}>
         <form className="row" onSubmit={async e => { e.preventDefault(); if (!note.trim()) return; await post(`/applications/${activeApp}/notes`, { body: note }); setNote(''); void loadNotes(activeApp); }}><input className="grow" value={note} onChange={e => setNote(e.target.value)} placeholder="Add an internal note" aria-label="Note" /><Button variant="primary" type="submit">Add</Button></form>
         {notes.map(n => <div key={n.id} style={{ padding: '8px 0', borderBottom: '1px solid var(--border)' }}><b>{n.author}</b> <span className="small muted">{fmtDate(n.created_at)}</span><div>{n.body}</div></div>)}</Card>}
@@ -140,3 +142,24 @@ function DecisionModal({ app, onClose, onDone }: { app: any; onClose: () => void
   );
 }
 export { patch };
+
+/** Lets the hiring team send a message the candidate sees in their careers portal (and by email). Internal notes stay internal. */
+function ShareUpdate({ app, onClose }: { app: any; onClose: () => void }) {
+  const toast = useToast();
+  const { data, reload } = useLoad(() => get(`/applications/${app.id}/updates`), [app.id]);
+  const [msg, setMsg] = useState(''); const [kind, setKind] = useState<'update' | 'feedback'>('update'); const [busy, setBusy] = useState(false); const [err, setErr] = useState<unknown>(null);
+  return (
+    <Modal title={`Share with the candidate · ${app.job_title}`} onClose={onClose} wide>
+      <div className="stack">
+        <div className="alert">This message is visible to the candidate in their IntervueX Careers portal and sent by email. Interviewer scorecards and internal notes are never shared.{data && !data.candidateHasPortal && <> The candidate has no verified portal account yet, so they will receive it by email.</>}</div>
+        <form className="stack" onSubmit={async e => { e.preventDefault(); setBusy(true); setErr(null); try { await post(`/applications/${app.id}/updates`, { message: msg, kind }); setMsg(''); toast('Shared with the candidate'); void reload(); } catch (x) { setErr(x); } finally { setBusy(false); } }}>
+          <div className="row">{(['update', 'feedback'] as const).map(k => <label key={k} className="check"><input type="radio" name="kind" checked={kind === k} onChange={() => setKind(k)} />{k === 'update' ? 'Status update' : 'Interview feedback'}</label>)}</div>
+          <Field label="Message"><textarea required minLength={5} value={msg} onChange={e => setMsg(e.target.value)} placeholder={kind === 'feedback' ? 'Thank you for your time. You showed strong problem-solving… One area to grow is…' : 'Thanks for applying! We are reviewing your profile and will get back to you this week.'} /></Field>
+          <ErrorBox error={err} />
+          <div className="row" style={{ justifyContent: 'flex-end' }}><Button variant="primary" busy={busy} type="submit">Share with candidate</Button></div>
+        </form>
+        {data?.items.length > 0 && <div className="stack gap-sm"><b>Previously shared</b>{data.items.map((u: any) => <div key={u.id} className="rounded-xl border border-line p-3 text-[14px]"><div className="mb-1 flex items-center gap-2"><Badge kind={u.kind === 'feedback' ? 'gold' as any : 'info'}>{u.kind === 'feedback' ? 'Feedback' : 'Update'}</Badge><span className="small muted">{u.author_name} · {fmtDate(u.created_at)}</span></div><div style={{ whiteSpace: 'pre-wrap' }}>{u.message}</div></div>)}</div>}
+      </div>
+    </Modal>
+  );
+}

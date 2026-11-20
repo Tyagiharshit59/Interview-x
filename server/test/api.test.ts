@@ -298,6 +298,80 @@ test('company admin creates an HR account; HR activates via single-use link; HR 
   assert.equal(li.status, 200); assert.equal(li.data.memberships.length, 2);
 });
 
+test('candidate portal: job board, verified-only access, apply, track, shared updates, invited interviews', async () => {
+  // company publishes a job (listed on the board) and a hidden one
+  const job = await A.req('POST', '/jobs', { title: 'Portal React Engineer', location: 'Pune', employment_type: 'Full-time', required_skills: ['react', 'typescript'], preferred_skills: ['node'], screening_questions: ['Notice period?'] });
+  assert.equal(job.status, 201);
+  assert.equal((await A.req('POST', `/jobs/${job.data.id}/status`, { status: 'published' })).status, 200);
+  const hidden = await A.req('POST', '/jobs', { title: 'Confidential Role', required_skills: ['react'], public_listing: false });
+  await A.req('POST', `/jobs/${hidden.data.id}/status`, { status: 'published' });
+
+  // anonymous job search
+  const P = new Client();
+  const search = await P.req('GET', '/portal/jobs?q=react');
+  assert.equal(search.status, 200);
+  assert.ok(search.data.items.some((x: any) => x.id === job.data.id));
+  assert.ok(!search.data.items.some((x: any) => x.id === hidden.data.id), 'opted-out jobs are not listed');
+  assert.equal((await P.req('GET', `/portal/jobs/${hidden.data.id}`)).status, 404);
+  assert.equal((await P.req('GET', '/portal/applications')).status, 401, 'portal data needs a candidate session');
+
+  // candidate signs up; staff session cookies and candidate cookies are separate
+  const reg = await P.req('POST', '/portal/auth/register', { name: 'Ravi Kumar', email: 'Ravi@Mail.test', password: 'RaviPassw0rd' });
+  assert.equal(reg.status, 201); assert.equal(reg.data.emailVerified, false);
+  assert.equal((await P.req('GET', '/jobs')).status, 401, 'a candidate session cannot use staff APIs');
+  assert.equal((await A.req('GET', '/portal/me')).status, 401, 'a staff session is not a candidate session');
+
+  // unverified: cannot apply, and sees no company data
+  await P.req('PATCH', '/portal/profile', { skills: ['react', 'typescript', 'css'], headline: 'Frontend Engineer', experience_years: 4 });
+  assert.equal((await P.req('POST', `/portal/jobs/${job.data.id}/apply`, { answers: [{ question: 'Notice period?', answer: '30 days' }] })).status, 403);
+  const tok = new URL(reg.data.devVerifyUrl).searchParams.get('token');
+  assert.equal((await P.req('POST', '/portal/auth/verify', { token: tok })).status, 200);
+
+  // recommendations use profile skills
+  const rec = await P.req('GET', '/portal/recommendations');
+  assert.ok(rec.data.items.some((x: any) => x.id === job.data.id && x.matchedSkills.includes('react')));
+
+  // screening answers are required; then apply once
+  assert.equal((await P.req('POST', `/portal/jobs/${job.data.id}/apply`, { answers: [] })).status, 400);
+  const ap = await P.req('POST', `/portal/jobs/${job.data.id}/apply`, { cover_note: 'Keen to join', answers: [{ question: 'Notice period?', answer: '30 days' }] });
+  assert.equal(ap.status, 201);
+  assert.equal((await P.req('POST', `/portal/jobs/${job.data.id}/apply`, { answers: [{ question: 'Notice period?', answer: '30 days' }] })).status, 409);
+
+  // the company sees the applicant
+  const cl = await A.req('GET', '/candidates?q=ravi');
+  const cand = cl.data.items.find((c: any) => c.email.toLowerCase() === 'ravi@mail.test');
+  assert.ok(cand); assert.equal(cand.source, 'portal');
+
+  // staff share an update; internal scores/notes are not exposed to the candidate
+  assert.equal((await A.req('POST', `/applications/${ap.data.applicationId}/updates`, { message: 'Thanks Ravi, we are reviewing your profile.' })).status, 201);
+  const apps = await P.req('GET', '/portal/applications');
+  const mine = apps.data.items.find((x: any) => x.id === ap.data.applicationId);
+  assert.equal(mine.status.label, 'Application received');
+  assert.equal(mine.updates[0].message, 'Thanks Ravi, we are reviewing your profile.');
+  assert.equal(mine.match_score, undefined); assert.equal(JSON.stringify(mine).includes('match_detail'), false);
+
+  // the company invites the candidate to an interview -> it appears in the portal; joining is gated by the join window
+  const team = await A.req('GET', '/team');
+  const lead = team.data.members.find((m: any) => m.role === 'owner').user_id;
+  const iv = await A.req('POST', '/interviews', { applicationId: ap.data.applicationId, title: 'Portal Round', scheduledAt: iso(240), durationMin: 30, interviewerIds: [lead], config: {} });
+  assert.equal(iv.status, 201);
+  const ivs = await P.req('GET', '/portal/interviews');
+  assert.ok(ivs.data.upcoming.some((x: any) => x.id === iv.data.id));
+  assert.equal((await P.req('POST', `/portal/interviews/${iv.data.id}/ticket`)).status, 425, 'room not open yet');
+  // another candidate cannot see or join it
+  const Q = new Client();
+  const r2 = await Q.req('POST', '/portal/auth/register', { name: 'Other Person', email: 'other@mail.test', password: 'OtherPassw0rd' });
+  await Q.req('POST', '/portal/auth/verify', { token: new URL(r2.data.devVerifyUrl).searchParams.get('token') });
+  assert.equal((await Q.req('GET', '/portal/interviews')).data.upcoming.length, 0);
+  assert.equal((await Q.req('POST', `/portal/interviews/${iv.data.id}/ticket`)).status, 404);
+
+  // saved jobs and withdrawal
+  assert.equal((await P.req('POST', `/portal/jobs/${job.data.id}/save`)).status, 200);
+  assert.equal((await P.req('GET', '/portal/saved')).data.items.length, 1);
+  assert.equal((await P.req('POST', `/portal/applications/${ap.data.applicationId}/withdraw`)).status, 200);
+  assert.equal((await P.req('GET', '/portal/applications')).data.items.find((x: any) => x.id === ap.data.applicationId).status.key, 'withdrawn');
+});
+
 test('login lockout, password reset invalidates sessions, MFA', async () => {
   const C = new Client();
   for (let i = 0; i < 5; i++) assert.equal((await C.req('POST', '/auth/login', { email: 'bob@beta.test', password: 'wrong-pass1' })).status, 401);

@@ -53,7 +53,7 @@ export function PageHeader({ eyebrow, title, description, actions }: { eyebrow?:
   );
 }
 export const ErrorBox = ({ error }: { error: unknown }) => error ? <div className="alert error" role="alert">{(error as any)?.message || String(error)}</div> : null;
-export const Badge = ({ kind, children }: { kind?: 'ok' | 'warn' | 'danger' | 'info' | 'primary'; children: ReactNode }) => <span className={`badge ${kind || ''}`}>{children}</span>;
+export const Badge = ({ kind, children }: { kind?: 'ok' | 'warn' | 'danger' | 'info' | 'primary' | 'gold'; children: ReactNode }) => <span className={`badge ${kind || ''}`}>{children}</span>;
 export const Card = ({ children, title, actions, className }: { children: ReactNode; title?: ReactNode; actions?: ReactNode; className?: string }) => (
   <section className={`card ${className || ''}`}>{(title || actions) && <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><h2 className="!mb-0 text-[17px]">{title}</h2><div className="flex flex-wrap items-center gap-2">{actions}</div></div>}{children}</section>
 );
