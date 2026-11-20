@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { fmtDate, get, money, post } from '../api';
-import { Badge, Button, Card, ErrorBox, Loading, Meter, statusBadge, useConfirm, useLoad, useToast } from '../ui';
+import { Badge, Button, Card, ErrorBox, Loading, Meter, statusBadge, useConfirm, useLoad, useToast, PageHeader } from '../ui';
 
 declare global { interface Window { Razorpay?: any } }
 const loadRazorpay = () => new Promise<void>((res, rej) => {
@@ -32,7 +32,7 @@ export function Billing() {
   const rows: Array<[string, any]> = [['Team accounts', u.members], ['Interviews', u.interviews], ['Interview minutes', u.interview_minutes], ['Code runs', u.code_runs], ['AI requests', u.ai_calls], ['Recording storage (MB)', u.recording_mb]];
   return (
     <div className="stack">
-      <h1>Billing & usage</h1>
+      <PageHeader eyebrow="Company" title="Billing & usage" description="Your plan, usage this period, invoices and payments." />
       <div className="grid g2">
         <Card title="Current plan">{sub ? <div className="stack gap-sm"><div className="row"><b style={{ fontSize: '1.3rem' }}>{sub.plan}</b>{statusBadge(sub.status)}</div>
           {sub.status === 'trialing' && <div>Trial ends {fmtDate(sub.trialEndsAt, { dateStyle: 'medium' })}</div>}{sub.status !== 'trialing' && <div>Current period ends {fmtDate(sub.periodEnd, { dateStyle: 'medium' })}</div>}

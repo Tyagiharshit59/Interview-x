@@ -2,7 +2,7 @@ import { useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { del, fmtDate, get, patch, post, upload } from '../api';
 import { useAuth } from '../auth';
-import { Badge, Button, Card, ChipInput, Empty, ErrorBox, Field, Loading, Modal, statusBadge, useConfirm, useLoad, useToast } from '../ui';
+import { Badge, Button, Card, ChipInput, Empty, ErrorBox, Field, Loading, Modal, statusBadge, useConfirm, useLoad, useToast, PageHeader } from '../ui';
 
 export function CandidatesList() {
   const { can } = useAuth(); const [sp] = useSearchParams(); const toast = useToast();
@@ -10,7 +10,7 @@ export function CandidatesList() {
   const { data, loading, error, reload } = useLoad(() => get(`/candidates?${new URLSearchParams({ ...(q ? { q } : {}), ...(skill ? { skill } : {}), ...(stage ? { stage } : {}) })}`), [q, skill, stage]);
   return (
     <div className="stack">
-      <div className="row between"><h1>Candidates</h1>{can('candidates.write') && <div className="row"><Button onClick={() => setImp(true)}>Import CSV</Button><Button variant="primary" onClick={() => setAdd(true)}>Add candidate</Button></div>}</div>
+      <PageHeader eyebrow="Hiring" title="Candidates" description="Everyone in your talent pool, with parsed CVs, skills and activity." actions={can('candidates.write') && <><Button onClick={() => setImp(true)}>Import CSV</Button><Button variant="primary" onClick={() => setAdd(true)}>Add candidate</Button></>} />
       <div className="row"><input style={{ maxWidth: 260 }} placeholder="Search name, email, title" value={q} onChange={e => setQ(e.target.value)} aria-label="Search candidates" />
         <input style={{ maxWidth: 160 }} placeholder="Skill" value={skill} onChange={e => setSkill(e.target.value)} aria-label="Filter by skill" />
         <input style={{ maxWidth: 180 }} placeholder="Stage (e.g. Shortlisted)" value={stage} onChange={e => setStage(e.target.value)} aria-label="Filter by stage" /></div>

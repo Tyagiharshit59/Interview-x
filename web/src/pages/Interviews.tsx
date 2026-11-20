@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { fmtDate, get, patch, post, del } from '../api';
 import { useAuth } from '../auth';
-import { Badge, Button, Card, Empty, ErrorBox, Field, Loading, Modal, statusBadge, useConfirm, useLoad, useToast } from '../ui';
+import { Badge, Button, Card, Empty, ErrorBox, Field, Loading, Modal, statusBadge, useConfirm, useLoad, useToast, PageHeader } from '../ui';
 
 /** Convert a wall-clock time in a given IANA zone to a UTC ISO string. */
 export function zonedToIso(local: string, tz: string) {
@@ -22,7 +22,7 @@ export function InterviewsList() {
   const { data, loading, error } = useLoad(() => get(`/interviews?${new URLSearchParams({ ...(status ? { status } : {}), ...(mine ? { mine: '1' } : {}) })}`), [status, mine]);
   return (
     <div className="stack">
-      <div className="row between"><h1>Interviews</h1>{can('interviews.schedule') && <Link className="btn primary" to="/interviews/new">Schedule interview</Link>}</div>
+      <PageHeader eyebrow="Hiring" title="Interviews" description="Upcoming and past interviews, with rooms, recordings and feedback." actions={can('interviews.schedule') && <Link className="btn primary" to="/interviews/new">Schedule interview</Link>} />
       <div className="row"><select style={{ maxWidth: 190 }} value={status} onChange={e => setStatus(e.target.value)} aria-label="Status"><option value="">All statuses</option><option>scheduled</option><option>in_progress</option><option>completed</option><option>cancelled</option></select>
         <label className="check"><input type="checkbox" checked={mine} onChange={e => setMine(e.target.checked)} />Only mine</label></div>
       <ErrorBox error={error} />
@@ -62,7 +62,7 @@ export function ScheduleWizard() {
   };
   return (
     <div className="stack" style={{ maxWidth: 820 }}>
-      <h1>Schedule interview</h1>
+      <PageHeader eyebrow="Interviews" title="Schedule interview" description="The candidate receives a secure, personal link by email." />
       <div className="row">{['Candidate', 'Details', 'Interviewers & tools', 'Review'].map((s, i) => <Badge key={s} kind={step === i + 1 ? 'primary' : step > i + 1 ? 'ok' : undefined}>{i + 1}. {s}</Badge>)}</div>
       <ErrorBox error={err} />
       {step === 1 && <Card title="Choose candidate">

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { del, get, patch, post, upload } from '../api';
 import { useAuth } from '../auth';
-import { Badge, Button, Card, ChipInput, Empty, ErrorBox, Field, Loading, statusBadge, useConfirm, useLoad, useToast } from '../ui';
+import { Badge, Button, Card, ChipInput, Empty, ErrorBox, Field, Loading, statusBadge, useConfirm, useLoad, useToast, PageHeader } from '../ui';
 
 export function JobsList() {
   const { can } = useAuth(); const toast = useToast(); const nav = useNavigate();
@@ -11,7 +11,7 @@ export function JobsList() {
   const { confirm, node } = useConfirm();
   return (
     <div className="stack">
-      <div className="row between"><h1>{tpl ? 'JD templates' : 'Jobs'}</h1>{can('jobs.write') && <Link className="btn primary" to="/jobs/new">New job</Link>}</div>
+      <PageHeader eyebrow="Hiring" title={tpl ? 'JD templates' : 'Jobs'} description={tpl ? 'Reusable job descriptions for roles you hire often.' : 'Open roles, their pipelines and applicants.'} actions={can('jobs.write') && <Link className="btn primary" to="/jobs/new">New job</Link>} />
       <div className="row"><input style={{ maxWidth: 280 }} placeholder="Search title or department" value={q} onChange={e => setQ(e.target.value)} aria-label="Search jobs" />
         <select style={{ maxWidth: 180 }} value={status} onChange={e => setStatus(e.target.value)} aria-label="Status"><option value="">All statuses</option><option>draft</option><option>published</option><option>archived</option></select>
         <label className="check"><input type="checkbox" checked={tpl} onChange={e => setTpl(e.target.checked)} />Templates only</label></div>

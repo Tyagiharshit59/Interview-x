@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { del, fmtDate, get, patch, post } from '../api';
 import { useAuth } from '../auth';
-import { Badge, Button, Card, ErrorBox, Field, Loading, statusBadge, useLoad, useToast } from '../ui';
+import { Badge, Button, Card, ErrorBox, Field, Loading, statusBadge, useLoad, useToast, PageHeader } from '../ui';
 
 const ROLE_HELP: Record<string, string> = {
   owner: 'Everything, including billing and ownership', admin: 'Company settings, members, billing, all recruitment data', recruiter: 'Jobs, candidates, scheduling and pipeline', interviewer: 'Conducts interviews, coding, notes and feedback', hiring_manager: 'Reviews profiles, feedback, recordings; makes decisions',
@@ -15,7 +15,7 @@ export function Team() {
   const manage = can('members.manage');
   return (
     <div className="stack">
-      <h1>Team & permissions</h1>
+      <PageHeader eyebrow="Company" title="Team & permissions" description="Invite colleagues and choose what each role can do." />
       {manage && <Card title="Invite a teammate">
         <form className="row" style={{ alignItems: 'flex-end' }} onSubmit={async e => { e.preventDefault(); setErr(null); try { const r = await post('/team/invites', inv); setInv({ ...inv, email: '' }); setDev(r.devInviteUrl || ''); toast('Invitation sent'); void reload(); } catch (x) { setErr(x); } }}>
           <div className="grow"><Field label="Email"><input type="email" required value={inv.email} onChange={e => setInv({ ...inv, email: e.target.value })} /></Field></div>

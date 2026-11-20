@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { del, get, post, put } from '../api';
 import { useAuth } from '../auth';
-import { Badge, Button, Card, Empty, ErrorBox, Field, Loading, Modal, useConfirm, useLoad, useToast } from '../ui';
+import { Badge, Button, Card, Empty, ErrorBox, Field, Loading, Modal, useConfirm, useLoad, useToast, PageHeader } from '../ui';
 
 export function Questions() {
   const { can } = useAuth(); const toast = useToast(); const { confirm, node } = useConfirm();
@@ -9,7 +9,7 @@ export function Questions() {
   const { data, loading, error, reload } = useLoad(() => get(`/questions?${new URLSearchParams({ ...(q ? { q } : {}), ...(kind ? { kind } : {}) })}`), [q, kind]);
   return (
     <div className="stack">
-      <div className="row between"><h1>Question bank</h1>{can('questions.write') && <Button variant="primary" onClick={() => setEdit({ title: '', prompt: '', difficulty: 'medium', kind: 'coding', category: '', languages: ['javascript', 'python'], starter_code: {}, time_limit_sec: 2, scoring_criteria: '', tests: [] })}>New question</Button>}</div>
+      <PageHeader eyebrow="Assessments" title="Question bank" description="Coding and system-design questions with starter code and test cases." actions={can('questions.write') && <Button variant="primary" onClick={() => setEdit({ title: '', prompt: '', difficulty: 'medium', kind: 'coding', category: '', languages: ['javascript', 'python'], starter_code: {}, time_limit_sec: 2, scoring_criteria: '', tests: [] })}>New question</Button>} />
       <div className="row"><input style={{ maxWidth: 260 }} placeholder="Search" value={q} onChange={e => setQ(e.target.value)} aria-label="Search questions" /><select style={{ maxWidth: 180 }} value={kind} onChange={e => setKind(e.target.value)} aria-label="Kind"><option value="">All kinds</option><option value="coding">Coding</option><option value="system_design">System design</option><option value="concept">Concept</option></select></div>
       <ErrorBox error={error} />
       <Card>{loading ? <Loading /> : !data?.items.length ? <Empty title="No questions" /> : <div className="table-wrap"><table><thead><tr><th>Title</th><th>Kind</th><th>Difficulty</th><th>Tests</th><th /></tr></thead><tbody>

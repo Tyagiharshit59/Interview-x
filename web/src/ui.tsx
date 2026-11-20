@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from 'react';
+import { CheckCircle2, AlertCircle, X, Inbox } from 'lucide-react';
 
 /* ---------- toasts ---------- */
 const ToastCtx = createContext<(msg: string, kind?: 'ok' | 'error') => void>(() => {});
@@ -13,7 +14,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastCtx.Provider value={push}>
       {children}
-      <div className="toasts" role="status" aria-live="polite">{items.map(t => <div key={t.id} className={`toast ${t.kind}`}>{t.msg}</div>)}</div>
+      <div className="toasts" role="status" aria-live="polite">{items.map(t => <div key={t.id} className={`toast ${t.kind}`}>{t.kind === 'error' ? <AlertCircle className="h-4 w-4 flex-none" /> : <CheckCircle2 className="h-4 w-4 flex-none text-emerald-400" />}<span>{t.msg}</span></div>)}</div>
     </ToastCtx.Provider>
   );
 }
@@ -23,12 +24,38 @@ export function Button({ variant, size, busy, children, ...p }: ButtonHTMLAttrib
   return <button {...p} disabled={p.disabled || busy} className={`btn ${variant || ''} ${size || ''} ${p.className || ''}`}>{busy && <span className="spinner" style={{ width: 14, height: 14, borderWidth: 2 }} />}{children}</button>;
 }
 export const Spinner = () => <span className="spinner" role="status" aria-label="Loading" />;
-export const Loading = () => <div className="empty"><Spinner /></div>;
-export const Empty = ({ title, children }: { title: string; children?: ReactNode }) => <div className="empty"><h3>{title}</h3>{children}</div>;
+export const Loading = () => (
+  <div className="flex flex-col gap-4 animate-fade-up" aria-busy="true" aria-label="Loading">
+    <div className="h-8 w-56 rounded-xl bg-raised animate-pulse" />
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">{[0, 1, 2].map(i => <div key={i} className="h-28 rounded-2xl bg-raised animate-pulse" />)}</div>
+    <div className="h-64 rounded-2xl bg-raised animate-pulse" />
+  </div>
+);
+export const Empty = ({ title, children, icon }: { title: string; children?: ReactNode; icon?: ReactNode }) => (
+  <div className="empty">
+    <span className="mb-2 grid h-14 w-14 place-items-center rounded-2xl bg-brand-500/10 text-brand-500 ring-1 ring-brand-500/20">{icon ?? <Inbox className="h-6 w-6" />}</span>
+    <h3>{title}</h3>
+    {children && <div className="max-w-md text-[14px]">{children}</div>}
+  </div>
+);
+
+/** Page title row: eyebrow, title, description and actions. */
+export function PageHeader({ eyebrow, title, description, actions }: { eyebrow?: ReactNode; title: ReactNode; description?: ReactNode; actions?: ReactNode }) {
+  return (
+    <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+      <div className="min-w-0">
+        {eyebrow && <div className="mb-1.5 text-[11px] font-bold uppercase tracking-[0.16em] text-gold-500">{eyebrow}</div>}
+        <h1 className="mb-0">{title}</h1>
+        {description && <p className="mt-1.5 mb-0 max-w-2xl text-[15px] text-muted">{description}</p>}
+      </div>
+      {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
+    </div>
+  );
+}
 export const ErrorBox = ({ error }: { error: unknown }) => error ? <div className="alert error" role="alert">{(error as any)?.message || String(error)}</div> : null;
 export const Badge = ({ kind, children }: { kind?: 'ok' | 'warn' | 'danger' | 'info' | 'primary'; children: ReactNode }) => <span className={`badge ${kind || ''}`}>{children}</span>;
 export const Card = ({ children, title, actions, className }: { children: ReactNode; title?: ReactNode; actions?: ReactNode; className?: string }) => (
-  <section className={`card ${className || ''}`}>{(title || actions) && <div className="row between" style={{ marginBottom: 10 }}><h2 style={{ margin: 0 }}>{title}</h2><div className="row">{actions}</div></div>}{children}</section>
+  <section className={`card ${className || ''}`}>{(title || actions) && <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><h2 className="!mb-0 text-[17px]">{title}</h2><div className="flex flex-wrap items-center gap-2">{actions}</div></div>}{children}</section>
 );
 
 export function Field({ label, hint, error, children }: { label: string; hint?: string; error?: string; children: ReactNode }) {
@@ -47,7 +74,7 @@ export function Modal({ title, onClose, children, wide }: { title: string; onClo
   return (
     <div className="modal-bg" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="modal" role="dialog" aria-modal="true" aria-label={title} ref={ref} style={wide ? { width: 'min(820px,100%)' } : undefined}>
-        <div className="row between"><h2>{title}</h2><button className="btn ghost icon" onClick={onClose} aria-label="Close">✕</button></div>
+        <div className="mb-4 flex items-center justify-between gap-3"><h2 className="!mb-0 text-xl">{title}</h2><button className="btn ghost icon" onClick={onClose} aria-label="Close"><X className="h-5 w-5" /></button></div>
         {children}
       </div>
     </div>
@@ -60,7 +87,7 @@ export function useConfirm() {
   const node = state ? (
     <Modal title="Please confirm" onClose={() => { state.resolve(false); setState(null); }}>
       <p>{state.msg}</p>
-      <div className="row" style={{ justifyContent: 'flex-end' }}>
+      <div className="mt-5 flex justify-end gap-2">
         <Button onClick={() => { state.resolve(false); setState(null); }}>Cancel</Button>
         <Button variant={state.danger ? 'danger' : 'primary'} onClick={() => { state.resolve(true); setState(null); }}>Confirm</Button>
       </div>

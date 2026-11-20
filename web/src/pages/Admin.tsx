@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { del, fmtDate, get, money, patch, post, put } from '../api';
 import { useAuth } from '../auth';
-import { Badge, Button, Card, ErrorBox, Field, Loading, Modal, statusBadge, useLoad, useToast } from '../ui';
+import { Badge, Button, Card, ErrorBox, Field, Loading, Modal, statusBadge, useLoad, useToast, PageHeader } from '../ui';
 
 export function Admin() {
   const { me } = useAuth();
@@ -11,7 +11,7 @@ export function Admin() {
   const tabs = [['overview', 'Overview'], ['companies', 'Companies'], ['plans', 'Plans'], ['coupons', 'Coupons'], ['flags', 'Feature flags'], ['announce', 'Announcements'], ['invoices', 'Invoices'], ['support', 'Support'], ['audit', 'Audit']];
   return (
     <div className="stack">
-      <h1>Platform console</h1>
+      <PageHeader eyebrow="IntervueX internal" title="Platform console" description="Tenants, plans, coupons, invoices, support and platform health." />
       <div className="tabs" role="tablist">{tabs.map(([k, l]) => <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? 'active' : ''} onClick={() => setTab(k)}>{l}</button>)}</div>
       {tab === 'overview' && <Overview />}{tab === 'companies' && <Companies />}{tab === 'plans' && <Plans />}{tab === 'coupons' && <Coupons />}{tab === 'flags' && <Flags />}{tab === 'announce' && <Announce />}{tab === 'invoices' && <Invoices />}{tab === 'support' && <Support />}{tab === 'audit' && <Audit />}
     </div>

@@ -1,14 +1,14 @@
 import { useEffect, useState } from 'react';
 import { fmtDate, get, patch, post, put } from '../api';
 import { useAuth } from '../auth';
-import { Badge, Button, Card, ChipInput, ErrorBox, Field, Loading, useLoad, useToast } from '../ui';
+import { Badge, Button, Card, ChipInput, ErrorBox, Field, Loading, useLoad, useToast, PageHeader } from '../ui';
 
 export function Settings() {
   const [tab, setTab] = useState('company');
   const tabs: Array<[string, string]> = [['company', 'Company'], ['privacy', 'Recording, AI & privacy'], ['evaluation', 'Evaluation form'], ['security', 'Security'], ['notifications', 'Notifications'], ['audit', 'Audit log'], ['support', 'Support']];
   return (
     <div className="stack">
-      <h1>Settings</h1>
+      <PageHeader eyebrow="Company" title="Settings" description="Company profile, hiring stages, recording, AI and security policies." />
       <div className="tabs" role="tablist">{tabs.map(([k, l]) => <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? 'active' : ''} onClick={() => setTab(k)}>{l}</button>)}</div>
       {tab === 'company' && <CompanyTab />}{tab === 'privacy' && <PrivacyTab />}{tab === 'evaluation' && <EvalTab />}{tab === 'security' && <SecurityTab />}{tab === 'notifications' && <NotifTab />}{tab === 'audit' && <AuditTab />}{tab === 'support' && <SupportTab />}
     </div>

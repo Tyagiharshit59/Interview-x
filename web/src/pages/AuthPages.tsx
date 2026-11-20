@@ -3,16 +3,36 @@ import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-do
 import { get, post } from '../api';
 import { useAuth } from '../auth';
 import { Button, ErrorBox, Field } from '../ui';
+import { Check } from 'lucide-react';
+import { Logo } from './Layout';
 
-function Shell({ title, children, sub }: { title: string; children: ReactNode; sub?: ReactNode }) {
+function Shell({ title, children, sub, subtitle }: { title: string; children: ReactNode; sub?: ReactNode; subtitle?: ReactNode }) {
   return (
-    <div className="auth-wrap">
-      <div className="card auth-card stack">
-        <Link to="/" className="brand" style={{ padding: 0 }}><span className="logo">▶</span>IntervueX</Link>
-        <h1 style={{ fontSize: '1.4rem', margin: 0 }}>{title}</h1>
-        {children}
-        {sub && <div className="small muted center">{sub}</div>}
-      </div>
+    <div className="grid min-h-full lg:grid-cols-[1.05fr_1fr]">
+      <aside className="relative hidden overflow-hidden bg-night-gradient p-12 text-white lg:flex lg:flex-col">
+        <div className="pointer-events-none absolute -right-24 -top-24 h-96 w-96 rounded-full bg-brand-500/30 blur-3xl" />
+        <div className="pointer-events-none absolute -bottom-32 -left-16 h-96 w-96 rounded-full bg-gold-400/15 blur-3xl" />
+        <div className="relative"><Logo light /></div>
+        <div className="relative my-auto max-w-lg">
+          <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-gold-300">Structured hiring, beautifully done</div>
+          <h2 className="mt-4 font-display text-[2.6rem] font-semibold leading-[1.1] text-white">Every interview, fair, focused and on the record.</h2>
+          <ul className="mt-8 flex list-none flex-col gap-3.5 p-0 text-[15px] text-slate-300">
+            {['Live video, shared coding and whiteboard in one room', 'Evidence-based scorecards and independent feedback', 'Consent-first recording with clear candidate controls'].map(t => (
+              <li key={t} className="flex items-start gap-3"><span className="mt-0.5 grid h-5 w-5 flex-none place-items-center rounded-full bg-gold-gradient"><Check className="h-3 w-3 text-midnight-950" strokeWidth={3} /></span>{t}</li>
+            ))}
+          </ul>
+        </div>
+        <div className="relative text-[13px] text-slate-500">© IntervueX</div>
+      </aside>
+      <main className="flex items-center justify-center px-5 py-12 sm:px-10">
+        <div className="w-full max-w-[420px] animate-fade-up">
+          <div className="mb-8 lg:hidden"><Logo /></div>
+          <h1 className="mb-1.5 font-display text-[2rem] font-semibold">{title}</h1>
+          {subtitle && <p className="mb-0 text-muted">{subtitle}</p>}
+          <div className="mt-7 flex flex-col gap-4">{children}</div>
+          {sub && <div className="mt-8 text-center text-[14px] text-muted">{sub}</div>}
+        </div>
+      </main>
     </div>
   );
 }
@@ -30,13 +50,13 @@ export function Login() {
     } catch (x) { setErr(x); } finally { setBusy(false); }
   };
   return (
-    <Shell title="Sign in" sub={<>New here? <Link to="/register">Create a company account</Link></>}>
+    <Shell title="Welcome back" subtitle="Sign in to your IntervueX workspace." sub={<>New here? <Link to="/register">Create a company account</Link></>}>
       <form className="stack" onSubmit={submit}>
         <ErrorBox error={err} />
         <Field label="Work email"><input type="email" autoComplete="username" required value={f.email} onChange={e => setF({ ...f, email: e.target.value })} /></Field>
         <Field label="Password"><input type="password" autoComplete="current-password" required value={f.password} onChange={e => setF({ ...f, password: e.target.value })} /></Field>
         {mfa && <Field label="Authentication code" hint="From your authenticator app"><input inputMode="numeric" autoComplete="one-time-code" maxLength={6} required autoFocus value={f.totp} onChange={e => setF({ ...f, totp: e.target.value })} /></Field>}
-        <Button variant="primary" busy={busy} type="submit">{mfa ? 'Verify and sign in' : 'Sign in'}</Button>
+        <Button variant="primary" busy={busy} type="submit" className="!min-h-[48px] w-full">{mfa ? 'Verify and sign in' : 'Sign in'}</Button>
         <Link to="/forgot-password" className="small center">Forgot password?</Link>
       </form>
     </Shell>
@@ -52,14 +72,14 @@ export function Register() {
   };
   const fe = (p: string) => err?.details?.find?.((d: any) => d.path === p)?.message;
   return (
-    <Shell title="Start your 14-day free trial" sub={<>Already have an account? <Link to="/login">Sign in</Link></>}>
+    <Shell title="Start your free trial" subtitle="14 days of every Professional feature. No card required." sub={<>Already have an account? <Link to="/login">Sign in</Link></>}>
       <form className="stack" onSubmit={submit}>
         {err && !err.details && <ErrorBox error={err} />}
         <Field label="Company name" error={fe('companyName')}><input required value={f.companyName} onChange={e => setF({ ...f, companyName: e.target.value })} /></Field>
         <Field label="Your name" error={fe('name')}><input required autoComplete="name" value={f.name} onChange={e => setF({ ...f, name: e.target.value })} /></Field>
         <Field label="Work email" error={fe('email')}><input type="email" required autoComplete="username" value={f.email} onChange={e => setF({ ...f, email: e.target.value })} /></Field>
         <Field label="Password" hint="At least 8 characters, with a letter and a number" error={fe('password')}><input type="password" required autoComplete="new-password" value={f.password} onChange={e => setF({ ...f, password: e.target.value })} /></Field>
-        <Button variant="primary" busy={busy} type="submit">Create account</Button>
+        <Button variant="primary" busy={busy} type="submit" className="!min-h-[48px] w-full">Create account</Button>
         <p className="small muted" style={{ margin: 0 }}>No card needed. We'll email you a link to verify your address.</p>
       </form>
     </Shell>

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { get } from '../api';
 import { useAuth } from '../auth';
-import { Card, ErrorBox, Loading, useLoad } from '../ui';
+import { Card, ErrorBox, Loading, useLoad, PageHeader } from '../ui';
 
 export function Analytics() {
   const { can } = useAuth();
@@ -14,7 +14,7 @@ export function Analytics() {
   const max = Math.max(1, ...(data?.funnel.map((f: any) => f.count) || [1]));
   return (
     <div className="stack">
-      <div className="row between"><h1>Analytics</h1>{can('reports.export') && <div className="row"><a className="btn sm" href="/api/reports/export?type=candidates">Export candidates CSV</a><a className="btn sm" href="/api/reports/export?type=interviews">Export interviews CSV</a></div>}</div>
+      <PageHeader eyebrow="Insights" title="Analytics" description="Funnel, interviewer load and coding performance across your hiring." actions={can('reports.export') && <><a className="btn sm" href="/api/reports/export?type=candidates">Export candidates CSV</a><a className="btn sm" href="/api/reports/export?type=interviews">Export interviews CSV</a></>} />
       <Card>
         <div className="grid g4">
           <label className="field">From<input type="date" value={flt.from} onChange={e => set('from', e.target.value)} /></label>
