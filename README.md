@@ -19,7 +19,7 @@ npm run dev                         # API on :4000, web on :5173 (first start do
 Open http://localhost:5173 and **Start free trial** to create a company. A 14-day Professional trial is created automatically.
 
 * **Emails** (verification, invites, interview links) are printed in the API console and stored in `email_outbox` unless SMTP is configured. Dev-only responses also include the link (`devVerifyUrl`, `devInviteUrl`).
-* **Super admin:** created on first start. If `SUPER_ADMIN_PASSWORD` is empty, a random password is generated and printed once in the API console. Sign in at `/login`; you are taken to `/admin`.
+* **Super admin:** create one, or reset a forgotten password, from the server: `npm run superadmin -w server -- --email you@company.com --password 'NewPassw0rd'` (there is no web sign-up for super admins). Also created on first start: If `SUPER_ADMIN_PASSWORD` is empty, a random password is generated and printed once in the API console. Sign in at `/login`; you are taken to `/admin`.
 * **Code execution** is `disabled` by default. For a quick local demo of JavaScript/Python only, set `CODE_RUNNER=dev-local` (**not a sandbox; refused in production**). For real use, deploy [Judge0](https://github.com/judge0/judge0) and set `CODE_RUNNER=judge0`, `JUDGE0_URL=...`.
 * **Payments:** without Razorpay keys the Billing page uses a dev-only payment simulator.
 * **Camera/mic** work on `localhost`. On any other host you need HTTPS.
