@@ -19,12 +19,14 @@ import { Join } from './pages/Join';
 import { CameraCompanion } from './pages/Camera';
 import { Playback } from './pages/Playback';
 import { Admin } from './pages/Admin';
+import { CompanyPage } from './pages/AdminConsole';
 import { ReferHome, MyReferrals, ReferralsManage } from './pages/Referrals';
 import { CandProvider, PortalLayout, RequireCand, PortalLogin, PortalRegister, PortalAccept, PortalVerify, PortalForgot, PortalReset } from './portal/Shell';
 import { JobSearch, PortalJobDetail, SavedJobs } from './portal/Jobs';
 import { CandDashboard, CandApplications, CandInterviews, CandJoin, CandProfile } from './portal/Account';
 import { Outlet } from 'react-router-dom';
 
+function Admin2() { const { me } = useAuth(); return me?.user.isSuperAdmin ? <CompanyPage /> : <Navigate to="/dashboard" replace />; }
 const Cand = () => <CandProvider><Outlet /></CandProvider>;
 
 const Room = lazy(() => import('./room/Room').then(m => ({ default: m.Room })));
@@ -86,6 +88,7 @@ export function App() {
         <Route path="/interviews/:id/room" element={needCompany(<Room />)} />
         <Route element={<Protected><Layout /></Protected>}>
           <Route path="/admin" element={<Admin />} />
+          <Route path="/admin/companies/:id" element={<Admin2 />} />
           <Route path="/dashboard" element={<CompanyOnly><Dashboard /></CompanyOnly>} />
           <Route path="/jobs" element={<CompanyOnly><JobsList /></CompanyOnly>} />
           <Route path="/jobs/new" element={<CompanyOnly><JobEditor /></CompanyOnly>} />

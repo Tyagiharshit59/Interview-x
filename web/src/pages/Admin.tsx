@@ -3,17 +3,20 @@ import { useNavigate } from 'react-router-dom';
 import { del, fmtDate, get, money, patch, post, put } from '../api';
 import { useAuth } from '../auth';
 import { Badge, Button, Card, ErrorBox, Field, Loading, Modal, statusBadge, useLoad, useToast, PageHeader } from '../ui';
+import { ConsoleOverview, CompaniesTable } from './AdminConsole';
 
 export function Admin() {
   const { me } = useAuth();
-  const [tab, setTab] = useState('overview');
+  const [tab, setTab] = useState(() => { const q = new URLSearchParams(window.location.search).get('tab'); if (q) return q; try { return sessionStorage.getItem('ivx-admin-tab') || 'overview'; } catch { return 'overview'; } });
+  const [healthFilter, setHealthFilter] = useState('');
+  const go = (t: string) => { setTab(t); try { sessionStorage.setItem('ivx-admin-tab', t); } catch { /* storage unavailable */ } };
   if (!me?.user.isSuperAdmin) return <div className="alert error">Super admin access required.</div>;
-  const tabs = [['overview', 'Overview'], ['companies', 'Companies'], ['plans', 'Plans'], ['coupons', 'Coupons'], ['flags', 'Feature flags'], ['announce', 'Announcements'], ['invoices', 'Invoices'], ['support', 'Support'], ['audit', 'Audit']];
+  const tabs = [['overview', 'Overview'], ['companies', 'Companies'], ['plans', 'Plans'], ['coupons', 'Coupons'], ['flags', 'Feature flags'], ['announce', 'Announcements'], ['invoices', 'Invoices'], ['support', 'Support'], ['audit', 'Audit'], ['health', 'System health']];
   return (
     <div className="stack">
-      <PageHeader eyebrow="IntervueX internal" title="Platform console" description="Tenants, plans, coupons, invoices, support and platform health." />
-      <div className="tabs" role="tablist">{tabs.map(([k, l]) => <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? 'active' : ''} onClick={() => setTab(k)}>{l}</button>)}</div>
-      {tab === 'overview' && <Overview />}{tab === 'companies' && <Companies />}{tab === 'plans' && <Plans />}{tab === 'coupons' && <Coupons />}{tab === 'flags' && <Flags />}{tab === 'announce' && <Announce />}{tab === 'invoices' && <Invoices />}{tab === 'support' && <Support />}{tab === 'audit' && <Audit />}
+      <PageHeader eyebrow="IntervueX internal" title="Platform console" description="Every customer company, its growth, health, revenue and limits, plus plans, coupons, support and platform health." />
+      <div className="tabs" role="tablist">{tabs.map(([k, l]) => <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? 'active' : ''} onClick={() => { setHealthFilter(''); go(k); }}>{l}</button>)}</div>
+      {tab === 'overview' && <ConsoleOverview onOpenCompanies={h => { setHealthFilter(h || ''); go('companies'); }} />}{tab === 'companies' && <CompaniesTable key={healthFilter} initialHealth={healthFilter} />}{tab === 'health' && <Overview />}{tab === 'plans' && <Plans />}{tab === 'coupons' && <Coupons />}{tab === 'flags' && <Flags />}{tab === 'announce' && <Announce />}{tab === 'invoices' && <Invoices />}{tab === 'support' && <Support />}{tab === 'audit' && <Audit />}
     </div>
   );
 }

@@ -26,7 +26,7 @@ const iso = (offsetMin: number) => new Date(Date.now() + offsetMin * 60000).toIS
 before(async () => {
   proc = spawn(process.execPath, ['--import', 'tsx', 'src/index.ts'], {
     cwd: path.resolve(import.meta.dirname, '..'), stdio: 'pipe',
-    env: { ...process.env, PORT: String(PORT), DB_PATH: path.join(tmp, 't.db'), STORAGE_DIR: tmp, CODE_RUNNER: 'dev-local', NODE_ENV: 'test', APP_URL: 'http://localhost:5173' },
+    env: { ...process.env, PORT: String(PORT), DB_PATH: path.join(tmp, 't.db'), STORAGE_DIR: tmp, CODE_RUNNER: 'dev-local', NODE_ENV: 'test', SUPER_ADMIN_EMAIL: 'root@intervuex.test', SUPER_ADMIN_PASSWORD: 'Root-Passw0rd-1', APP_URL: 'http://localhost:5173' },
   });
   for (let i = 0; i < 60; i++) { try { const r = await fetch(BASE + '/health'); if (r.ok) return; } catch { /* wait */ } await new Promise(r => setTimeout(r, 250)); }
   throw new Error('server did not start');
@@ -448,6 +448,57 @@ test('employee referral portal: HR-created accounts, employee isolation, referra
   const em = team.data.members.find((m: any) => m.email === 'esha@acme.test');
   assert.equal((await H2.req('PATCH', `/team/members/${em.id}`, { status: 'disabled' })).status, 200);
   assert.equal((await E.req('GET', '/referrals/mine')).status, 403);
+});
+
+test('platform console: overview, company table, insights, provisioning, notes, commercials, CSV', async () => {
+  const R = new Client();
+  assert.equal((await R.req('POST', '/auth/login', { email: 'root@intervuex.test', password: 'Root-Passw0rd-1' })).status, 200);
+  assert.equal((await A.req('GET', '/admin/overview')).status, 403, 'company owners cannot use the platform console');
+
+  const ov = await R.req('GET', '/admin/overview');
+  assert.equal(ov.status, 200);
+  assert.ok(ov.data.kpis.companies >= 2); assert.equal(ov.data.series.interviews.length, 12);
+  assert.ok(ov.data.series.interviews.reduce((a: number, p: any) => a + p.y, 0) >= 1);
+  assert.ok(Array.isArray(ov.data.attention) && Array.isArray(ov.data.plan_mix));
+
+  const tbl = await R.req('GET', '/admin/companies-table?q=acme');
+  const acme = tbl.data.items.find((c: any) => c.name === 'Acme Corp');
+  assert.ok(acme); assert.ok(acme.interviews >= 1); assert.equal(acme.trend.length, 8); assert.ok(acme.health.key);
+  const sorted = await R.req('GET', '/admin/companies-table?sort=name&dir=asc');
+  const names = sorted.data.items.map((c: any) => c.name.toLowerCase());
+  assert.deepEqual(names, [...names].sort());
+
+  const ins = await R.req('GET', `/admin/companies/${acme.id}/insights`);
+  assert.equal(ins.status, 200);
+  assert.ok(ins.data.counts.interviews >= 1); assert.equal(ins.data.series.interviews.length, 12);
+  assert.ok(ins.data.breakdowns.funnel.length > 0); assert.ok(ins.data.members.length >= 2);
+
+  // edit profile + tags, notes, commercials (MRR follows the negotiated price once paid)
+  assert.equal((await R.req('PATCH', `/admin/companies/${acme.id}`, { industry: 'Software', admin_tags: ['VIP', 'Pilot'] })).status, 200);
+  assert.equal((await R.req('POST', `/admin/companies/${acme.id}/notes`, { text: 'Renewal call booked for next week.' })).status, 201);
+  assert.equal((await R.req('PUT', `/admin/companies/${acme.id}/commercials`, { custom_price_monthly: 7000, discount_percent: 10, billing_cycle: 'monthly' })).status, 200);
+  await R.req('PUT', `/admin/companies/${acme.id}/subscription`, { status: 'active', extendDays: 30 });
+  const after = await R.req('GET', `/admin/companies/${acme.id}/insights`);
+  assert.deepEqual(after.data.company.admin_tags, ['VIP', 'Pilot']);
+  assert.equal(after.data.company.admin_notes[0].text, 'Renewal call booked for next week.');
+  assert.equal(after.data.mrr, 6300, '7000 less 10%');
+
+  // provision a company; its owner activates with a single-use link
+  const plans = (await R.req('GET', '/admin/plans')).data.items;
+  const mk = await R.req('POST', '/admin/companies', { name: 'Zeta Systems', owner_name: 'Zara Owner', owner_email: 'zara@zeta.test', plan_code: plans[0].code, trial_days: 21, jobCodePrefix: 'ZETA' });
+  assert.equal(mk.status, 201); assert.ok(mk.data.devActivateUrl);
+  const Z = new Client();
+  const act = await Z.req('POST', '/auth/activate', { token: new URL(mk.data.devActivateUrl).searchParams.get('token'), password: 'ZaraPassw0rd' });
+  assert.equal(act.status, 200); assert.equal(act.data.role, 'owner'); assert.equal(act.data.company.name, 'Zeta Systems');
+  const zjob = await Z.req('POST', '/jobs', { title: 'First Zeta role' });
+  assert.equal(zjob.data.job_code, 'ZETA-0001');
+
+  // CSV export, with spreadsheet-formula neutralisation
+  await R.req('PATCH', `/admin/companies/${mk.data.id}`, { name: '=HYPERLINK("x")' });
+  const csv = await fetch(BASE + '/admin/companies-export.csv', { headers: { Cookie: R.cookie } });
+  const text = await csv.text();
+  assert.equal(csv.status, 200); assert.ok(text.includes('Acme Corp'));
+  assert.ok(text.includes("'=HYPERLINK") && !/(^|,)=HYPERLINK/m.test(text), 'formula is neutralised');
 });
 
 test('login lockout, password reset invalidates sessions, MFA', async () => {

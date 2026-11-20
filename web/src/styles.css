@@ -13,12 +13,15 @@
     --muted: 104 107 138;     /* secondary text */
     --ok: 16 150 102; --warn: 196 120 18; --danger: 214 50 72;
     color-scheme: light;
+    /* data-viz tokens (validated: categorical slots 1-3 all-pairs on these surfaces) */
+    --viz-brand: #6d5cf0; --viz-1: #2a78d6; --viz-2: #eb6834; --viz-3: #1baf7a;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: 9 11 24; --surface: 17 20 40; --raised: 25 29 56; --line: 38 43 78; --ink: 236 237 250; --muted: 150 155 196;
       --ok: 52 211 153; --warn: 245 182 84; --danger: 251 113 133;
       color-scheme: dark;
+      --viz-brand: #8b7cf8; --viz-1: #3987e5; --viz-2: #d95926; --viz-3: #199e70;
     }
   }
 
@@ -82,7 +85,7 @@
   .btn.icon { @apply px-2.5 min-w-[42px]; }
 
   /* cards */
-  .card { @apply relative bg-surface border border-line rounded-2xl shadow-soft p-5 sm:p-6 animate-fade-up; }
+  .card { @apply relative min-w-0 bg-surface border border-line rounded-2xl shadow-soft p-5 sm:p-6 animate-fade-up; }
   .card.flat { @apply shadow-none; }
   .card h2 { @apply mb-3; }
 

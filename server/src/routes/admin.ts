@@ -6,9 +6,11 @@ import { wrap, parse, HttpError, notFound, addDays } from '../util.js';
 import { audit, usageSummary, getEntitlements, DEFAULT_ENTITLEMENTS } from '../services.js';
 import { runnerInfo } from '../code.js';
 import { config } from '../config.js';
+import { insightsRouter } from './adminInsights.js';
 
 export const adminRouter = Router();
 adminRouter.use(requireSuperAdmin);
+adminRouter.use(insightsRouter);
 
 adminRouter.get('/stats', wrap(async (_req, res) => {
   const [companies, activeCompanies, users, interviews, paidSubscriptions, trialing, revenuePaise, openSupport] = await Promise.all([
