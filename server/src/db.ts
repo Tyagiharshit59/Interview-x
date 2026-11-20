@@ -35,7 +35,17 @@ if (!uri) {
   if (!config.isTest) console.log(`[db] No MONGODB_URI set: using an embedded development MongoDB at ${dbPath}`);
 }
 export const client = new MongoClient(uri, { ignoreUndefined: true, maxPoolSize: 20 });
-await client.connect();
+try { await client.connect(); }
+catch (e: any) {
+  const msg = String(e?.message || e);
+  const hint = /auth/i.test(msg)
+    ? 'MongoDB rejected the username/password in MONGODB_URI (server/.env). Use the *database user* from Atlas → Security → Database & Network Access (not your Atlas login), reset its password if unsure, and URL-encode special characters.'
+    : /ENOTFOUND|querySrv|ECONNREFUSED|timed out|Server selection/i.test(msg)
+      ? 'Could not reach MongoDB. Check the host in MONGODB_URI and that this machine\'s IP is in Atlas → Network Access.'
+      : 'Could not connect to MongoDB with MONGODB_URI.';
+  console.error(`\n[db] ${hint}\n[db] Driver said: ${msg}\n`);
+  process.exit(1);
+}
 export const raw: Db = client.db(config.mongo.dbName);
 export async function closeDb() { await client.close(); await embedded?.stop(); }
 
